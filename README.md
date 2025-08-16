@@ -66,23 +66,20 @@ qemu-system-aarch64 \
  -pidfile /Users/pirj/.macpine/victoria/alpine.pid \
  -rtc base=utc,clock=host \
  -nographic \
- -serial tcp:127.0.0.1:10023,server=on,wait=off,nodelay=on \
+ -serial telnet:127.0.0.1:10023,server=on,wait=off,nodelay=on \
  -serial unix:app.sock,server=on,wait=off,nodelay=on \
  -serial mon:stdio
 
 and then
 
-telnet 127.0.0.1 10023
+    telnet 127.0.0.1 10023
 
 or
 
-nc - u app.sock
+nc -U app.sock
 
 or socat, nc, echo etc
 
-
-???could not connect serial device
- -serial unix:app.sock \
 
 Create an image backed by a reference. Changes, and only changes will be stored.
 
