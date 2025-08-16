@@ -67,6 +67,7 @@ qemu-system-aarch64 \
  -nographic \
  -serial telnet:127.0.0.1:10023,server=on,wait=off,nodelay=on \
  -serial unix:app.sock,server=on,wait=off,nodelay=on \
+ -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=control.sock,server=on,wait=off \
  -serial mon:stdio
 
 and then
@@ -79,6 +80,9 @@ nc -U app.sock
 
 or socat, nc, echo etc
 
+to poweroff:
+
+    echo quit | nc -U control.sock
 
 Create an image backed by a reference. Changes, and only changes will be stored.
 
