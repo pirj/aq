@@ -63,7 +63,6 @@ qemu-system-aarch64 \
  -drive if=virtio,file=alpine.qcow2 \
  -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
  -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
- -pidfile /Users/pirj/.macpine/victoria/alpine.pid \
  -rtc base=utc,clock=host \
  -nographic \
  -serial telnet:127.0.0.1:10023,server=on,wait=off,nodelay=on \
@@ -83,6 +82,32 @@ or socat, nc, echo etc
 
 Create an image backed by a reference. Changes, and only changes will be stored.
 
+## TODO
+
+### Use the default SeaBIOS
+
+Somehow, it doesn't work. Filed a bug https://gitlab.com/qemu-project/qemu/-/issues/3080
+Workaround: use the bundled EDK II OVMF EFI firmware
+Downsides: flickers on boot
+
+## Set a non-default MAC address
+
+Might be needed for multiple machines to avoid duplicate MACs
+
+    -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
+
+## daemonize
+
+    -pidfile /Users/pirj/.macpine/victoria/alpine.pid \
+    -daemonize
+
+## Boot splash!
+
+    boot with a splash picture for 5 seconds.
+    -boot menu=on,splash=/root/boot.bmp,splash-time=5000
+
+
+## Why not X?
 
 ### vs Docker
 
