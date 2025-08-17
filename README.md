@@ -41,6 +41,8 @@ VM is not set in stone as an "image".
 
     brew install pirj/aq/aq
 
+(will also install qemu, telnet, socat).
+
 ### Simplistic Workflow
 
 Create a new virtual machine:
@@ -64,7 +66,9 @@ Install required packages.
 Run services (sshd, nginx, ...).
 ? reboot
 
-### 
+### Misc tools
+
+??? Most importantly - how to exit ~~Vim~~ Telnet, QEMU serial console & QEMU Monitor
 
 Monitor
 
@@ -119,9 +123,6 @@ QEMU allows snapshots. Cool feature, can be used to save on creating a fleet of 
 ### Telnet through a socket
 
 Telnet provides a nice, modern interactive mode to the virtual machine shell.
-However, it is inherently TCP/IP, and needs a TCP port to connect to. It can't work via a socket out of the box.
-To provide Telnet access as a console to the virtual machine's shell, we need to generate a port.
-Those ports have to be kept somehow not to overlap between running virtual machines.
 
     -serial telnet:127.0.0.1:10023,server=on,wait=off,nodelay=on \
 
@@ -136,10 +137,6 @@ There's already a socket that can be accessed with `nc -U`, but it's not compara
     socat TCP-LISTEN:10223 UNIX-CONNECT:telnet.sock & # no fork: exit when the client closes the connection; goes to background
 
     telnet localhost 10223
-
-Challenges: still need to be pick an available port.
-
-    seq 100 999 | xargs ... lsof -i :<port>23
 
 Keep the socket for `nc`, as `nc` handles scripting nicely.
 Maybe even keep those sockets separate, so that a human-driven console does not interfere with scripted commands.

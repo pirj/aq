@@ -3,8 +3,8 @@
 # aq - QEMU wrapper script
 # Usage: aq [new|start|stop|console|exec|rm|ls|ps] [args...]
 
-set -e
-set -o pipefail
+# set -e
+# set -o pipefail Bashism
 
 BASE_DIR=~/.local/share/aq
 
@@ -60,28 +60,37 @@ aq_start() {
 
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
-    -bios /opt/homebrew/Cellar/qemu/10.0.3/share/qemu/edk2-aarch64-code.fd \
-    -drive if=virtio,file=alpine.qcow2 \
+    -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
+    -drive if=virtio,file=$BASE_DIR/$vm_name/storage.qcow2 \
+    -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
     -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
     -rtc base=utc,clock=host \
-    -serial unix:console.sock,server=on,wait=off,nodelay=on \
-    -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=control.sock,server=on,wait=off \
+    -serial unix:$BASE_DIR/$vm_name/console.sock,server=on,wait=off,nodelay=on \
+    -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$vm_name/control.sock,server=on,wait=off \
     -nographic \
-    -monitor none
+    -serial mon:stdio
+    #-monitor none
+
 
   stderr Started $vm_name
 }
 
 aq_stop() {
-  local VM_NAME=$1
+  vm_name=$1
+  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
+  # echo quit | nc -U control.sock
+  stderr "Not implemented yet"
 }
 
 available_telnet_port() {
-  echo 111
   for prefix in $(seq 492 655); do
-    echo $prefix
-    lsof -i :"$prefix"23 || return $prefix
+    if lsof -i :"$prefix"23 1>/dev/null; then
+      true
+    else
+      echo $prefix
+      return 0
+    fi
   done
 
   stderr No available '***23' local TCP ports found.
@@ -91,24 +100,29 @@ available_telnet_port() {
 aq_console() {
   vm_name=$1
   [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
-  echo 111
-  console_port=$(available_telnet_port)
+  console_port="$(available_telnet_port)"
 
-  stderr "DEBUG: available $console_port"
+  # `telnet` works over TCP. To provide Telnet console to the virtual machine's
+  # shell, find an available TCP port, and relay that to the socket.
+  # NOTE: no fork - exit when the Telnet client closes the connection
+  socat TCP-LISTEN:$console_port UNIX-CONNECT:$BASE_DIR/$vm_name/console.sock &
+  telnet localhost $console_port
 }
 
 aq_exec() {
   vm_name=$1
   [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq exec <vm-name> <shell-script>`.' && exit 1
+  stderr "Not implemented yet"
 }
 
 aq_rm() {
   vm_name=$1
   [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq rm <vm-name>`.' && exit 1
+  stderr "Not implemented yet"
 }
 
 aq_ls() {
-  true # noop
+  stderr "Not implemented yet"
 }
 
 command=$1
