@@ -150,3 +150,7 @@ Head-to-head with Docker, Macpine, and Virsh
 ### vs Virsh
 
 ### vs Macpine
+
+## License
+
+AQ is released under the [MIT License](https://opensource.org/licenses/MIT).
