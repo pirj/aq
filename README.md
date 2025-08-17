@@ -1,8 +1,8 @@
-## Alq
+## aq
 
 Alpine on QEMU
 
-`alq`, a tiny wrapper around QEMU, capable of starting Alpine Linux "units".
+`aq`, a tiny wrapper around QEMU, capable of starting Alpine Linux "units".
 
 Features and anti-features:
  - Alpine Linux only
@@ -25,19 +25,19 @@ It is easy to use one storage as a base for others.
 
 ### Cheat Sheet
 
-Here's a sneak peek of `alq` for you:
+Here's a sneak peek of `aq` for you:
 
-    alq new guest-1    # creates a new unit
-    alq start guest-1
-    alq stop guest-1
-    alq status guest-1
-    alq ls             # list machines
-    alq console
-    alq rm guest-1
+    aq new guest-1    # creates a new unit
+    aq start guest-1
+    aq stop guest-1
+    aq status guest-1
+    aq ls             # list machines
+    aq console
+    aq rm guest-1
 
 ### Install
 
-    brew install pirj/alq/alq
+    brew install pirj/aq/aq
 
 ## TWO
 

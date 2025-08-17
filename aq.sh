@@ -1,20 +1,20 @@
 #!/bin/bash
 
-# alq - QEMU wrapper script
-# Usage: alq [start|stop|new|ls] [args...]
+# aq - QEMU wrapper script
+# Usage: aq [start|stop|new|ls] [args...]
 
-alq_help() {
+aq_help() {
   cat <<HELP
-    alq new <vm-name>
-    alq console <vm-name>
-    alq start <vm-name>
-    alq stop <vm-name>
-    alq rm <vm-name>
-    alq ls
+    aq new <vm-name>
+    aq console <vm-name>
+    aq start <vm-name>
+    aq stop <vm-name>
+    aq rm <vm-name>
+    aq ls
 HELP
 }
 
-alq_new() {
+aq_new() {
   local VM_NAME=$1
 
 # shuf -n 3 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
@@ -29,7 +29,7 @@ alq_new() {
   echo "Basic VM created with disk image: $VM_NAME.qcow2"
 }
 
-alq_start() {
+aq_start() {
   local VM_NAME=$1
 
   if [ -z "$VM_NAME" ]; then
@@ -42,7 +42,7 @@ alq_start() {
   eval $QEMU_CMD
 }
 
-alq_console() {
+aq_console() {
   local VM_NAME=$1
 
   if [ -z "$VM_NAME" ]; then
@@ -54,7 +54,7 @@ alq_console() {
   eval $QEMU_CMD
 }
 
-alq_stop() {
+aq_stop() {
   local VM_NAME=$1
 
   if [ -z "$VM_NAME" ]; then
@@ -66,7 +66,7 @@ alq_stop() {
   pkill -f "qemu-system-aarch64.*-hda $VM_NAME.qcow2"
 }
 
-alq_rm() {
+aq_rm() {
   local VM_NAME=$1
 
   if [ -z "$VM_NAME" ]; then
@@ -77,7 +77,7 @@ alq_rm() {
   echo "Removing VM: $VM_NAME"
 }
 
-alq_ls() {
+aq_ls() {
   echo "Listing running VMs:"
   pgrep -f "qemu-system-aarch64" | awk '{print $1}'
 }
@@ -86,22 +86,22 @@ COMMAND=$1
 shift
 case $COMMAND in
   new)
-    alq_new "$*"
+    aq_new "$*"
     ;;
   start)
-    alq_start "$*"
+    aq_start "$*"
     ;;
   stop)
-    alq_stop "$*"
+    aq_stop "$*"
     ;;
   rm)
-    alq_rm "$*"
+    aq_rm "$*"
     ;;
   ls)
-    alq_ls
+    aq_ls
     ;;
   "" | "help" | "-h" | "--help")
-    alq_help
+    aq_help
     ;;
   *)
     echo "Error: Unknown command $COMMAND." >&2
