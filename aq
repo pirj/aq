@@ -1,0 +1,128 @@
+#!/usr/bin/env sh
+
+# aq - QEMU wrapper script
+# Usage: aq [new|start|stop|console|exec|rm|ls|ps] [args...]
+
+set -e
+set -o pipefail
+
+BASE_DIR=~/.local/share/aq
+
+aq_help() {
+  cat <<HELP
+    aq new <vm-name>
+    aq start <vm-name>
+    aq stop <vm-name>
+    aq console <vm-name>
+    aq exec <vm-name> <shell-script>
+    aq rm <vm-name>
+    aq ls
+HELP
+}
+
+random_vm_name() {
+  # Approximately 200K words, 2^32 random names
+  shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
+}
+
+LATEST_ALPINE_MAJOR_MINOR=3.22
+LATEST_ALPINE_ISO=alpine-virt-3.22.1-aarch64.iso
+
+download_base_alpine_iso() {
+  mkdir -p $BASE_DIR
+  (
+    cd $BASE_DIR
+    [ -f $LATEST_ALPINE_ISO ] || wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO
+  )
+}
+
+stderr() {
+  echo "$@" >&2
+}
+
+aq_new() {
+  vm_name=$1
+  [ -z "$vm_name" ] && vm_name=$(random_vm_name)
+  download_base_alpine_iso
+  (
+    cd $BASE_DIR
+    mkdir $vm_name
+    cd $vm_name
+    qemu-img create -f qcow2 storage.qcow2 6G 1>/dev/null
+  )
+  stderr Created:
+  echo $vm_name
+}
+
+aq_start() {
+  vm_name=$1
+  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
+
+  qemu-system-aarch64 \
+    -machine virt,highmem=on -accel hvf -cpu host -m 1G \
+    -bios /opt/homebrew/Cellar/qemu/10.0.3/share/qemu/edk2-aarch64-code.fd \
+    -drive if=virtio,file=alpine.qcow2 \
+    -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
+    -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
+    -rtc base=utc,clock=host \
+    -serial unix:console.sock,server=on,wait=off,nodelay=on \
+    -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=control.sock,server=on,wait=off \
+    -nographic \
+    -monitor none
+
+  stderr Started $vm_name
+}
+
+aq_stop() {
+  local VM_NAME=$1
+}
+
+available_telnet_port() {
+  echo 111
+  for prefix in $(seq 492 655); do
+    echo $prefix
+    lsof -i :"$prefix"23 || return $prefix
+  done
+
+  stderr No available '***23' local TCP ports found.
+  exit 1
+}
+
+aq_console() {
+  vm_name=$1
+  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
+  echo 111
+  console_port=$(available_telnet_port)
+
+  stderr "DEBUG: available $console_port"
+}
+
+aq_exec() {
+  vm_name=$1
+  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq exec <vm-name> <shell-script>`.' && exit 1
+}
+
+aq_rm() {
+  vm_name=$1
+  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq rm <vm-name>`.' && exit 1
+}
+
+aq_ls() {
+  true # noop
+}
+
+command=$1
+shift
+case $command in
+  new) aq_new "$*" ;;
+  start) aq_start "$*" ;;
+  stop) aq_stop "$*" ;;
+  console) aq_console "$*" ;;
+  exec) aq_exec "$*" ;;
+  rm) aq_rm "$*" ;;
+  ls) aq_ls ;;
+  "" | "help" | "-h" | "--help") aq_help ;;
+  *) echo "Error: Unknown command $command." >&2; exit 1 ;;
+esac
+
+exit 0

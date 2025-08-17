@@ -27,61 +27,58 @@ VM is not set in stone as an "image".
 
 ### Cheat Sheet
 
-Here's a sneak peek of `aq` for you:
-
-    aq new guest-1    # creates a new unit
+    aq new guest-1
     aq start guest-1
     aq stop guest-1
-    aq status guest-1
-    aq ls             # list machines
-    aq console
+    aq console guest-1
+    aq exec guest-1 bootstrap.sh
     aq rm guest-1
+    aq ls
+    aq ls | grep Running
+    aq ls | grep guest-1
 
 ### Install
 
     brew install pirj/aq/aq
 
-## TWO
+### Simplistic Workflow
 
-Mount the Alpine as cdrom
-and set up the system on a mounted
-bootstrap via telnet/sock
+Create a new virtual machine:
 
-Create an image backed by a reference.
+    $ aq new
+    Created aureate-chuckhole
 
-prepare a base image
-spawn units from base
+Run some commands on it:
 
-Changes, and only changes will be stored.
+    $ aq exec aureate-chuckhole -- ps
 
+Remove it:
 
-wget https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/aarch64/alpine-virt-3.22.1-aarch64.iso
+    $ aq rm aureate-chuckhole
 
-qemu-img create -f qcow2 -o backing_file=alpine-virt-3.22.1-aarch64.iso -F raw alpine.qcow2
+### Common workflow
 
-qemu-system-aarch64 \
- -machine virt,highmem=on -accel hvf -cpu host -m 1G \
- -bios /opt/homebrew/Cellar/qemu/10.0.3/share/qemu/edk2-aarch64-code.fd \
- -drive if=virtio,file=alpine.qcow2 \
- -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
- -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
- -rtc base=utc,clock=host \
- -nographic \
- -serial unix:app.sock,server=on,wait=off,nodelay=on \
- -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=control.sock,server=on,wait=off \
- -serial mon:stdio
+Create a new virtual machine.
+Install the OS using a script.
+Install required packages.
+Run services (sshd, nginx, ...).
+? reboot
 
-and then
+### 
+
+Monitor
+
+    nc -U control.sock
+
+Console via telnet
 
     telnet 127.0.0.1 10023
 
-or
+Console via nc
 
-nc -U app.sock
+    nc -U app.sock
 
-or socat, nc, echo etc
-
-to poweroff:
+or nc, echo etc. E.g. to poweroff:
 
     echo quit | nc -U control.sock
 
@@ -103,8 +100,12 @@ Might be needed for multiple machines to avoid duplicate MACs
 
 ### daemonize
 
-    -pidfile /Users/pirj/.macpine/victoria/alpine.pid \
+    -pidfile vm.pid \
     -daemonize
+
+Error:
+    -nographic cannot be used with -daemonize
+Just remove -nographic?
 
 ### Boot splash!
 
@@ -137,6 +138,8 @@ There's already a socket that can be accessed with `nc -U`, but it's not compara
     telnet localhost 10223
 
 Challenges: still need to be pick an available port.
+
+    seq 100 999 | xargs ... lsof -i :<port>23
 
 Keep the socket for `nc`, as `nc` handles scripting nicely.
 Maybe even keep those sockets separate, so that a human-driven console does not interfere with scripted commands.
