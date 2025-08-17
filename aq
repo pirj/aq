@@ -10,12 +10,12 @@ BASE_DIR=~/.local/share/aq
 
 aq_help() {
   cat <<HELP
-    aq new <vm-name>
-    aq start <vm-name>
-    aq stop <vm-name>
-    aq console <vm-name>
-    aq exec <vm-name> <shell-script>
-    aq rm <vm-name>
+    aq new [vm-name]
+    aq start vm-name
+    aq stop vm-name
+    aq console vm-name
+    aq exec vm-name shell-script
+    aq rm vm-name
     aq ls
 HELP
 }
@@ -41,44 +41,39 @@ stderr() {
 }
 
 aq_new() {
-  vm_name=$1
-  [ -z "$vm_name" ] && vm_name=$(random_vm_name)
+  [ -z "$VM_NAME" ] && VM_NAME=$(random_vm_name)
   download_base_alpine_iso
   (
     cd $BASE_DIR
-    mkdir $vm_name
-    cd $vm_name
+    mkdir $VM_NAME
+    cd $VM_NAME
     qemu-img create -f qcow2 storage.qcow2 6G 1>/dev/null
   )
   stderr Created:
-  echo $vm_name
+  echo $VM_NAME
 }
 
 aq_start() {
-  vm_name=$1
-  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
+  [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
 
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
     -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
-    -drive if=virtio,file=$BASE_DIR/$vm_name/storage.qcow2 \
+    -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
     -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
     -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
     -rtc base=utc,clock=host \
-    -serial unix:$BASE_DIR/$vm_name/console.sock,server=on,wait=off,nodelay=on \
-    -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$vm_name/control.sock,server=on,wait=off \
+    -serial unix:$BASE_DIR/$VM_NAME/console.sock,server=on,wait=off,nodelay=on,telnet=on \
+    -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$VM_NAME/control.sock,server=on,wait=off \
     -nographic \
-    -serial mon:stdio
-    #-monitor none
+    -monitor none &disown
 
-
-  stderr Started $vm_name
+  stderr Started $VM_NAME
 }
 
 aq_stop() {
-  vm_name=$1
-  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
+  [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
   # echo quit | nc -U control.sock
   stderr "Not implemented yet"
 }
@@ -97,27 +92,26 @@ available_telnet_port() {
   exit 1
 }
 
+# TODO: dynamically, via monitor, add telnet option?
+#       remove after use?
 aq_console() {
-  vm_name=$1
-  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
-  console_port="$(available_telnet_port)"
+  [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
+  CONSOLE_PORT="$(available_telnet_port)"
 
   # `telnet` works over TCP. To provide Telnet console to the virtual machine's
   # shell, find an available TCP port, and relay that to the socket.
   # NOTE: no fork - exit when the Telnet client closes the connection
-  socat TCP-LISTEN:$console_port UNIX-CONNECT:$BASE_DIR/$vm_name/console.sock &
-  telnet localhost $console_port
+  socat TCP-LISTEN:$CONSOLE_PORT UNIX-CONNECT:$BASE_DIR/$VM_NAME/console.sock &
+  telnet localhost "$CONSOLE_PORT"
 }
 
 aq_exec() {
-  vm_name=$1
-  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq exec <vm-name> <shell-script>`.' && exit 1
+  [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name> <shell-script>`.' && exit 1
   stderr "Not implemented yet"
 }
 
 aq_rm() {
-  vm_name=$1
-  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq rm <vm-name>`.' && exit 1
+  [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq rm <vm-name>`.' && exit 1
   stderr "Not implemented yet"
 }
 
@@ -125,9 +119,10 @@ aq_ls() {
   stderr "Not implemented yet"
 }
 
-command=$1
+COMMAND=$1
 shift
-case $command in
+VM_NAME=$1
+case $COMMAND in
   new) aq_new "$*" ;;
   start) aq_start "$*" ;;
   stop) aq_stop "$*" ;;
@@ -136,7 +131,7 @@ case $command in
   rm) aq_rm "$*" ;;
   ls) aq_ls ;;
   "" | "help" | "-h" | "--help") aq_help ;;
-  *) echo "Error: Unknown command $command." >&2; exit 1 ;;
+  *) echo "Error: Unknown command $COMMAND." >&2; exit 1 ;;
 esac
 
 exit 0
