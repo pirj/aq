@@ -90,12 +90,6 @@ Create an image backed by a reference. Changes, and only changes will be stored.
 
 ## TODO
 
-### Use the default SeaBIOS
-
-Somehow, it doesn't work. Filed a bug https://gitlab.com/qemu-project/qemu/-/issues/3080
-Workaround: use the bundled EDK II OVMF EFI firmware
-Downsides: flickers on boot
-
 ### Set a non-default MAC address
 
 Might be needed for multiple machines to avoid duplicate MACs
