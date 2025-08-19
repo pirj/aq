@@ -131,7 +131,7 @@ case $COMMAND in
   rm) aq_rm "$*" ;;
   ls) aq_ls ;;
   "" | "help" | "-h" | "--help") aq_help ;;
-  *) echo "Error: Unknown command $COMMAND." >&2; exit 1 ;;
+  *) stderr "Error: Unknown command $COMMAND."; exit 1 ;;
 esac
 
 exit 0
