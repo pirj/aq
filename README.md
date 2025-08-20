@@ -41,7 +41,7 @@ VM is not set in stone as an "image".
 
     brew install pirj/aq/aq
 
-(will also install qemu, telnet, socat).
+(will also install qemu and tio).
 
 ### Simplistic Workflow
 
@@ -66,29 +66,32 @@ Install required packages.
 Run services (sshd, nginx, ...).
 ? reboot
 
-### Misc tools
+Console:
 
-??? Most importantly - how to exit ~~Vim~~ Telnet, QEMU serial console & QEMU Monitor
+    $ aq console aureate-chuckhole
 
-Monitor
+??? Most importantly - how to exit ~~Vim~~ Tio, QEMU serial console & QEMU Monitor
 
-    nc -U control.sock
+Non-interactive commands
 
-Console via telnet
+    $ aq exec aureate-chuckhole -- ps
 
-    telnet 127.0.0.1 10023
+### Advanced
 
-Console via nc
-
-    nc -U app.sock
-
-or nc, echo etc. E.g. to poweroff:
+Monitor (advanced QEMU VM control):
 
     echo quit | nc -U control.sock
-
-Create an image backed by a reference. Changes, and only changes will be stored.
+    nc -U control.sock # Interactive
 
 ## TODO
+
+### Fix network sharing
+
+### Port forwarding
+
+Now hardcoded, accept options at start? or when creating a new vm? It should be clear from the beginning what the VM is all about, isn't it?
+
+### set -e, pipefail, bash as interpreter?
 
 ### Set a non-default MAC address
 
@@ -101,9 +104,13 @@ Might be needed for multiple machines to avoid duplicate MACs
     -pidfile vm.pid \
     -daemonize
 
-Error:
+Try with pidfile?
+
+1. Error:
     -nographic cannot be used with -daemonize
-Just remove -nographic?
+2. Just remove -nographic? Won't work with an error - file a bug? ask a question?
+    objc[81811]: +[__NSPlaceholderDate initialize] may have been in progress in another thread when fork() was called.
+    objc[81811]: +[__NSPlaceholderDate initialize] may have been in progress in another thread when fork() was called. We cannot safely call it or ignore it in the fork() child process. Crashing instead. Set a breakpoint on objc_initializeAfterForkError to debug.
 
 ### Boot splash!
 
@@ -114,26 +121,7 @@ Just remove -nographic?
 
 QEMU allows snapshots. Cool feature, can be used to save on creating a fleet of similar machines, mostly to save on the package fetching time". E.g. "install OS, install packages, set up SSHD, web server, git; snapshot; use the snapshot to spawn VMs".
 
-### Telnet through a socket
-
-Telnet provides a nice, modern interactive mode to the virtual machine shell.
-
-    -serial telnet:127.0.0.1:10023,server=on,wait=off,nodelay=on \
-
-On the other hand, a socket is just a file that can live in the directory where all other files related to that virtual machine reside.
-
-    -serial unix:console.sock,server=on,wait=off,nodelay=on,telnet=on \
-
-There's already a socket that can be accessed with `nc -U`, but it's not comparable for interactive use with Telnet.
-
-`socat` can proxy from a UNIX socket to TCP making it possible to connect with Telnet:
-
-    socat TCP-LISTEN:10223 UNIX-CONNECT:telnet.sock & # no fork: exit when the client closes the connection; goes to background
-
-    telnet localhost 10223
-
-Keep the socket for `nc`, as `nc` handles scripting nicely.
-Maybe even keep those sockets separate, so that a human-driven console does not interfere with scripted commands.
+Create an image backed by a reference. Changes, and only changes will be stored.
 
 ## Why not X?
 

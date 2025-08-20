@@ -56,6 +56,7 @@ aq_new() {
 aq_start() {
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
 
+  rm -f $BASE_DIR/$VM_NAME/console.pty # In case of a ungraceful exit
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
     -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
@@ -63,7 +64,8 @@ aq_start() {
     -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
     -nic user,model=virtio-net-pci,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
     -rtc base=utc,clock=host \
-    -serial unix:$BASE_DIR/$VM_NAME/console.sock,server=on,wait=off,nodelay=on,telnet=on \
+    -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on,telnet=on \
+    -serial pty:$BASE_DIR/$VM_NAME/console.pty \
     -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$VM_NAME/control.sock,server=on,wait=off \
     -nographic \
     -monitor none &disown
@@ -73,39 +75,17 @@ aq_start() {
 
 aq_stop() {
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
-  # echo quit | nc -U control.sock
-  stderr "Not implemented yet"
+  echo quit | nc -U $BASE_DIR/$VM_NAME/control.sock 1>/dev/null
 }
 
-available_telnet_port() {
-  for prefix in $(seq 492 655); do
-    if lsof -i :"$prefix"23 1>/dev/null; then
-      true
-    else
-      echo $prefix
-      return 0
-    fi
-  done
-
-  stderr No available '***23' local TCP ports found.
-  exit 1
-}
-
-# TODO: dynamically, via monitor, add telnet option?
-#       remove after use?
 aq_console() {
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
-  CONSOLE_PORT="$(available_telnet_port)"
-
-  # `telnet` works over TCP. To provide Telnet console to the virtual machine's
-  # shell, find an available TCP port, and relay that to the socket.
-  # NOTE: no fork - exit when the Telnet client closes the connection
-  socat TCP-LISTEN:$CONSOLE_PORT UNIX-CONNECT:$BASE_DIR/$VM_NAME/console.sock &
-  telnet localhost "$CONSOLE_PORT"
+  tio $BASE_DIR/$VM_NAME/console.pty
 }
 
 aq_exec() {
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name> <shell-script>`.' && exit 1
+  nc -U app.sock
   stderr "Not implemented yet"
 }
 
