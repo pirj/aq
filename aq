@@ -61,7 +61,7 @@ aq_start() {
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
     -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
-    -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
+    -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
     -nic user,model=virtio-net-pci,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
     -rtc base=utc,clock=host \
     -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on,telnet=on \
