@@ -61,8 +61,7 @@ aq_start() {
     -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
     -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
-    -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
-    -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
+    -nic user,model=virtio-net-pci,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
     -rtc base=utc,clock=host \
     -serial unix:$BASE_DIR/$VM_NAME/console.sock,server=on,wait=off,nodelay=on,telnet=on \
     -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$VM_NAME/control.sock,server=on,wait=off \
