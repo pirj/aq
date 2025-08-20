@@ -85,8 +85,6 @@ Monitor (advanced QEMU VM control):
 
 ## TODO
 
-### Fix network sharing
-
 ### Port forwarding
 
 Now hardcoded, accept options at start? or when creating a new vm? It should be clear from the beginning what the VM is all about, isn't it?
