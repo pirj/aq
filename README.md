@@ -111,6 +111,15 @@ Try with pidfile?
     objc[81811]: +[__NSPlaceholderDate initialize] may have been in progress in another thread when fork() was called.
     objc[81811]: +[__NSPlaceholderDate initialize] may have been in progress in another thread when fork() was called. We cannot safely call it or ignore it in the fork() child process. Crashing instead. Set a breakpoint on objc_initializeAfterForkError to debug.
 
+### cloud image
+
+fetch a cloud image, use it as a base for other qcow2 storage images as backing
+does it need installation?
+does it have storage?
+is it possible to increase storage when using the base as backing?
+
+https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/cloud/generic_alpine-3.22.1-aarch64-uefi-tiny-r0.qcow2
+
 ### Snapshots
 
 QEMU allows snapshots. Cool feature, can be used to save on creating a fleet of similar machines, mostly to save on the package fetching time". E.g. "install OS, install packages, set up SSHD, web server, git; snapshot; use the snapshot to spawn VMs".
