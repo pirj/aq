@@ -13,10 +13,10 @@ Out of frustration with existing tools, and failing to grasp the depth of the un
  - Alpine Linux only
  - only the latest Alpine
  - only the latest QEMU
- - text-mode only, for console, CLI and SSH
+ - text-mode console and CLI
  - no distinction between an image and a instance
  - Mac-only host
- - direct "console" local access via telnet
+ - direct console local access
  - sane defaults
 
 ### Philosophy
