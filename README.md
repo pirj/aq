@@ -103,6 +103,7 @@ Might be needed for multiple machines to avoid duplicate MACs
     -daemonize
 
 Try with pidfile?
+-parallel none \
 
 1. Error:
     -nographic cannot be used with -daemonize
