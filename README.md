@@ -113,12 +113,10 @@ Try with pidfile?
 
 ### cloud image
 
-fetch a cloud image, use it as a base for other qcow2 storage images as backing
-does it need installation?
-does it have storage?
-is it possible to increase storage when using the base as backing?
-
-https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/cloud/generic_alpine-3.22.1-aarch64-uefi-tiny-r0.qcow2
+Using a cloud image could remove one step (installing the OS), help saving a few seconds and package server traffic. In theory, cloud image could have been used as a backing storage image for virtual machines, also saving host disk space.
+However, it's impossible to log in to the the "cloud image" via console. the user is "alpine" but the password in either random or unset. SSH key for the user is pulled into the image via a metadata server, and this goes against the philosophy
+https://alpinelinux.org/cloud
+Can we affect this, and still log in using the password via the serial console?
 
 ### Snapshots
 
