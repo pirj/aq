@@ -64,7 +64,7 @@ aq_start() {
     -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
     -nic user,model=virtio-net-pci,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
     -rtc base=utc,clock=host \
-    -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on,telnet=on \
+    -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on \
     -serial pty:$BASE_DIR/$VM_NAME/console.pty \
     -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$VM_NAME/control.sock,server=on,wait=off \
     -daemonize -pidfile $BASE_DIR/$VM_NAME/process.pid \
