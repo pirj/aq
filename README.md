@@ -99,9 +99,11 @@ Might be needed for multiple machines to avoid duplicate MACs
 
 ### daemonize
 
+
     -pidfile vm.pid \
     -daemonize
 
+https://gitlab.com/qemu-project/qemu/-/issues/2515
 Try with pidfile?
 -parallel none \
 
@@ -110,6 +112,8 @@ Try with pidfile?
 2. Just remove -nographic? Won't work with an error - file a bug? ask a question?
     objc[81811]: +[__NSPlaceholderDate initialize] may have been in progress in another thread when fork() was called.
     objc[81811]: +[__NSPlaceholderDate initialize] may have been in progress in another thread when fork() was called. We cannot safely call it or ignore it in the fork() child process. Crashing instead. Set a breakpoint on objc_initializeAfterForkError to debug.
+3. The above error is present WITH -parallel none, but without -nographic present
+
 
 ### cloud image
 
