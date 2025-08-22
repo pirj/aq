@@ -97,24 +97,6 @@ Might be needed for multiple machines to avoid duplicate MACs
 
     -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
 
-### daemonize
-
-
-    -pidfile vm.pid \
-    -daemonize
-
-https://gitlab.com/qemu-project/qemu/-/issues/2515
-Try with pidfile?
--parallel none \
-
-1. Error:
-    -nographic cannot be used with -daemonize
-2. Just remove -nographic? Won't work with an error - file a bug? ask a question?
-    objc[81811]: +[__NSPlaceholderDate initialize] may have been in progress in another thread when fork() was called.
-    objc[81811]: +[__NSPlaceholderDate initialize] may have been in progress in another thread when fork() was called. We cannot safely call it or ignore it in the fork() child process. Crashing instead. Set a breakpoint on objc_initializeAfterForkError to debug.
-3. The above error is present WITH -parallel none, but without -nographic present
-
-
 ### cloud image
 
 Using a cloud image could remove one step (installing the OS), help saving a few seconds and package server traffic. In theory, cloud image could have been used as a backing storage image for virtual machines, also saving host disk space.

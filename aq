@@ -67,8 +67,11 @@ aq_start() {
     -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on,telnet=on \
     -serial pty:$BASE_DIR/$VM_NAME/console.pty \
     -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$VM_NAME/control.sock,server=on,wait=off \
+    -daemonize -pidfile $BASE_DIR/$VM_NAME/process.pid \
+    -name $VM_NAME \
     -nographic \
-    -monitor none &disown
+    -parallel none \
+    -monitor none
 
   stderr Started $VM_NAME
 }
