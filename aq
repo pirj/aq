@@ -105,12 +105,12 @@ COMMAND=$1
 shift
 VM_NAME=$1
 case $COMMAND in
-  new) aq_new "$*" ;;
-  start) aq_start "$*" ;;
-  stop) aq_stop "$*" ;;
-  console) aq_console "$*" ;;
-  exec) aq_exec "$*" ;;
-  rm) aq_rm "$*" ;;
+  new) aq_new $* ;;
+  start) aq_start $* ;;
+  stop) aq_stop $* ;;
+  console) aq_console $* ;;
+  exec) aq_exec $* ;;
+  rm) aq_rm $* ;;
   ls) aq_ls ;;
   "" | "help" | "-h" | "--help") aq_help ;;
   *) stderr "Error: Unknown command $COMMAND."; exit 1 ;;
