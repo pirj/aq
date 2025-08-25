@@ -27,7 +27,7 @@ VM is not set in stone as an "image".
 
 ### Cheat Sheet
 
-    aq new guest-1
+    aq new -p 2222:22 -p 8000 guest-1
     aq start guest-1
     aq stop guest-1
     aq console guest-1
@@ -84,10 +84,6 @@ Monitor (advanced QEMU VM control):
     nc -U control.sock # Interactive
 
 ## TODO
-
-### Port forwarding
-
-Now hardcoded, accept options at start? or when creating a new vm? It should be clear from the beginning what the VM is all about, isn't it?
 
 ### set -e, pipefail, bash as interpreter?
 

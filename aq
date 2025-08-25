@@ -10,7 +10,7 @@ BASE_DIR=~/.local/share/aq
 
 aq_help() {
   cat <<HELP
-    aq new [vm-name]
+    aq new [-p host-port:vm-port ...] [vm-name]
     aq start vm-name
     aq stop vm-name
     aq console vm-name
@@ -41,21 +41,54 @@ stderr() {
 }
 
 aq_new() {
+  forwards=()
+  while [ "$1" = "-p" ]; do
+    forwards+=($2); shift; shift
+  done
+  VM_NAME=$1
   [ -z "$VM_NAME" ] && VM_NAME=$(random_vm_name)
   download_base_alpine_iso
   (
     cd $BASE_DIR
     mkdir $VM_NAME
     cd $VM_NAME
+    for forward in "${forwards[@]}"; do
+      echo $forward >> hostfwd
+    done
     qemu-img create -f qcow2 storage.qcow2 6G 1>/dev/null
   )
   stderr Created:
   echo $VM_NAME
 }
 
+# Support 2222:22, or just 22, returns formatted hostfwd=tcp::2222-:22
+# TODO: support protocol: tcp/udp
+#       support hostaddr
+#       support guestaddr
+hostfwd_directive() {
+  HOST_PORT=$(echo $1 | cut -d: -f1)
+  GUEST_PORT=$(echo $1 | cut -d: -f2)
+  echo hostfwd=::$HOST_PORT-:$GUEST_PORT
+}
+
+hostfwd() {
+  VM_NAME=$1
+  (
+    cd $BASE_DIR/$VM_NAME
+    directives=()
+    for forward in $(cat hostfwd); do
+      directives+=($(hostfwd_directive $forward))
+    done
+    IFS=,
+    echo "${directives[*]}"
+  )
+}
+
 aq_start() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
+
+  HOST_FORWARDS=$(hostfwd $VM_NAME)
 
   rm -f $BASE_DIR/$VM_NAME/console.pty # In case of a ungraceful exit
   qemu-system-aarch64 \
@@ -63,7 +96,7 @@ aq_start() {
     -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
     -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
-    -nic user,model=virtio-net-pci,hostfwd=tcp::2222-:22,hostfwd=tcp::8428-:8428 \
+    -nic user,model=virtio-net-pci,$HOST_FORWARDS \
     -rtc base=utc,clock=host \
     -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on \
     -serial pty:$BASE_DIR/$VM_NAME/console.pty \
