@@ -54,6 +54,7 @@ aq_new() {
 }
 
 aq_start() {
+  VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
 
   rm -f $BASE_DIR/$VM_NAME/console.pty # In case of a ungraceful exit
@@ -77,22 +78,26 @@ aq_start() {
 }
 
 aq_stop() {
+  VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
   echo quit | nc -U $BASE_DIR/$VM_NAME/control.sock 1>/dev/null
 }
 
 aq_console() {
+  VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
   tio $BASE_DIR/$VM_NAME/console.pty
 }
 
 aq_exec() {
+  VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name> <shell-script>`.' && exit 1
   nc -U app.sock
   stderr "Not implemented yet"
 }
 
 aq_rm() {
+  VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq rm <vm-name>`.' && exit 1
   stderr "Not implemented yet"
 }
@@ -103,7 +108,6 @@ aq_ls() {
 
 COMMAND=$1
 shift
-VM_NAME=$1
 case $COMMAND in
   new) aq_new $* ;;
   start) aq_start $* ;;
