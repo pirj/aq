@@ -1,8 +1,8 @@
 ## aq
 
-Alpine on QEMU
+`aq`, a tiny wrapper around QEMU, runs Alpine Linux virtual machines.
 
-`aq`, a tiny wrapper around QEMU, capable of starting Alpine Linux virtual machines.
+Virtual Machine (VM) has dedicated persistent storage, both for data and for the OS kernel and binaries.
 
 ### Rationale
 
@@ -19,19 +19,16 @@ Out of frustration with existing tools, and failing to grasp the depth of the un
  - direct console local access
  - sane defaults
 
-### Philosophy
-
-Virtual Machine (VM) has persistent storage, both for data and for the OS kernel and binaries.
-A VM can be running or be stopped.
-VM is not set in stone as an "image".
-
 ### Cheat Sheet
 
     aq new -p 2222:22 -p 8000 guest-1
     aq start guest-1
     aq stop guest-1
     aq console guest-1
-    aq exec guest-1 bootstrap.sh
+    cat bootstrap.sh | aq exec guest-1
+    aq exec --all <<SH
+      echo ssh-ed25519 AAAAC...YJk foo@bar >> .ssh/authorized_keys
+    SH
     aq rm guest-1
     aq ls
     aq ls | grep Running
@@ -41,43 +38,37 @@ VM is not set in stone as an "image".
 
     brew install pirj/aq/aq
 
-### Simplistic Workflow
+### Usage
 
 Create a new virtual machine:
 
     $ aq new
     Created aureate-chuckhole
 
-Run some commands on it:
+Console into it:
+
+    $ aq console aureate-chuckhole
+
+Or run non-interactive commands:
 
     $ aq exec aureate-chuckhole -- ps
+
+Install packages:
+
+    # apk update && apk add victoria-metrics
+
+Run services (sshd, nginx, ...).
+
+    # rc-service victoria-metrics start
 
 Remove it:
 
     $ aq rm aureate-chuckhole
 
-### Common workflow
-
-Create a new virtual machine.
-Install the OS using a script.
-Install required packages.
-Run services (sshd, nginx, ...).
-? reboot
-
-Console:
-
-    $ aq console aureate-chuckhole
-
-Non-interactive commands
-
-    $ aq exec aureate-chuckhole -- ps
-
-### Advanced
-
 Monitor (advanced QEMU VM control):
 
-    echo quit | nc -U control.sock
-    nc -U control.sock # Interactive
+    $ echo quit | nc -U ~/.local/share/aq/cosset-league/control.sock
+    $ nc -U ~/.local/share/aq/cosset-league/control.sock # Interactive
 
 ## License
 
