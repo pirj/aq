@@ -41,8 +41,6 @@ VM is not set in stone as an "image".
 
     brew install pirj/aq/aq
 
-(will also install qemu and tio).
-
 ### Simplistic Workflow
 
 Create a new virtual machine:
@@ -70,8 +68,6 @@ Console:
 
     $ aq console aureate-chuckhole
 
-??? Most importantly - how to exit ~~Vim~~ Tio, QEMU serial console & QEMU Monitor
-
 Non-interactive commands
 
     $ aq exec aureate-chuckhole -- ps
@@ -82,37 +78,6 @@ Monitor (advanced QEMU VM control):
 
     echo quit | nc -U control.sock
     nc -U control.sock # Interactive
-
-## TODO
-
-### set -e, pipefail, bash as interpreter?
-
-### Set a non-default MAC address
-
-Might be needed for multiple machines to avoid duplicate MACs
-
-    -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
-
-### base image
-
-After downloading the CD image, create a base image and install.
-Use it as a backing image for other storages.
-
-### Snapshots
-
-QEMU allows snapshots. Cool feature, can be used to save on creating a fleet of similar machines, mostly to save on the package fetching time". E.g. "install OS, install packages, set up SSHD, web server, git; snapshot; use the snapshot to spawn VMs".
-
-Create an image backed by a reference. Changes, and only changes will be stored.
-
-## Why not X?
-
-### vs Docker
-
-Head-to-head with Docker, Macpine, and Virsh
-
-### vs Virsh
-
-### vs Macpine
 
 ## License
 
