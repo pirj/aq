@@ -123,7 +123,6 @@ PROXYOPTS=none
 APKREPOSOPTS="-1"
 
 # Create admin user
-USEROPTS="-a -u -g audio,input,video,netdev juser"
 USERSSHKEY="$(cat ~/.ssh/*.pub | head -1)"
 
 # Install Openssh
