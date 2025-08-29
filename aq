@@ -50,9 +50,12 @@ bootstrap_base_image() {
 
     qemu-img create -f qcow2 wip-$LATEST_ALPINE_BASE 500M 1>/dev/null
 
+    cp $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd uefi_vars.fd
+
     qemu-system-aarch64 \
       -machine virt,highmem=on -accel hvf -cpu host -m 1G \
-      -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
+      -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
+      -drive file=uefi_vars.fd,format=raw,if=pflash,unit=1 \
       -drive if=virtio,file=$BASE_DIR/wip-$LATEST_ALPINE_BASE \
       -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
       -nic user,model=virtio-net-pci \
@@ -176,6 +179,8 @@ aq_new() {
       echo $forward >> hostfwd
     done
     qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
+
+    cp $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd uefi_vars.fd
   )
   stderr Created:
   echo $VM_NAME
@@ -213,7 +218,8 @@ aq_start() {
   rm -f $BASE_DIR/$VM_NAME/console.pty # In case of a ungraceful exit
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
-    -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
+    -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
+    -drive file=uefi_vars.fd,format=raw,if=pflash,unit=1 \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
     -boot order=d \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
