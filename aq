@@ -45,6 +45,10 @@ bootstrap_base_image() {
   download_alpine_iso
   (
     cd $BASE_DIR
+
+    # Start from scratch
+    rm -f wip-$LATEST_ALPINE_BASE
+
     qemu-img create -f qcow2 wip-$LATEST_ALPINE_BASE 500M 1>/dev/null
 
     qemu-system-aarch64 \
@@ -64,11 +68,28 @@ bootstrap_base_image() {
 
     # To debug, run:
     #   nc -U command.sock
+    # or:
+    #   socat STDIO UNIX:command.sock
 
-    # FIXME: too early? wait for it to boot?
+    echo Booting up the base VM
 
-    echo "root" | socat - unix:command.sock
-    socat - unix:command.sock <<BOOTSTRAP
+    socat UNIX:command.sock PTY,link=command.pty &
+    SOCAT_PID=$!
+
+    tio \
+      --mute \
+      --script 'write("\n"); expect("localhost login: "); write("root\n")' \
+      --script-run once \
+      command.pty \
+      --exec 'echo ""'
+
+    kill $SOCAT_PID
+
+    echo  ..done
+
+    echo Bootstrapping:
+
+    cat <<BOOTSTRAP | socat STDIO UNIX:command.sock
 cat <<SETUP-CONF > setup.conf
 KEYMAPOPTS=none
 
@@ -118,9 +139,19 @@ echo y | setup-alpine -e -f setup.conf
 poweroff
 BOOTSTRAP
 
-# FIXME: what is juser?
+    # FIXME: what is juser?
 
-# FIXME: why so slow for a 500M disk?!
+    # FIXME: why so slow for a 500M disk?!
+    #  try smp and more cpu settings?
+
+    echo quit | nc -U control.sock
+
+    # FIXME: just in case
+    # does it exit immediately?
+    # or will it still attempt to write to the wip- file that we're about to rename?
+    # prone to race condition?
+    sleep 2
+    echo DONE
 
     mv $BASE_DIR/{wip-,}$LATEST_ALPINE_BASE
   )
