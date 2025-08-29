@@ -36,6 +36,22 @@ download_alpine_iso() {
   )
 }
 
+# Waits for certain input, can type, etc
+wait_for() {
+  SCRIPT=$1
+  socat UNIX:command.sock PTY,link=command.pty &
+  SOCAT_PID=$!
+
+  tio \
+    --mute \
+    --script "$1" \
+    --script-run once \
+    command.pty \
+    --exec 'echo ""'
+
+  kill $SOCAT_PID
+}
+
 ensure_base_image() {
   [ -f $BASE_DIR/$LATEST_ALPINE_BASE ] || bootstrap_base_image
 }
@@ -75,17 +91,7 @@ bootstrap_base_image() {
 
     echo Booting up the base VM
 
-    socat UNIX:command.sock PTY,link=command.pty &
-    SOCAT_PID=$!
-
-    tio \
-      --mute \
-      --script 'write("\n"); expect("localhost login: "); write("root\n")' \
-      --script-run once \
-      command.pty \
-      --exec 'echo ""'
-
-    kill $SOCAT_PID
+    wait_for 'write("\n"); expect("localhost login: "); write("root\n")'
 
     echo  ..done
 
@@ -135,25 +141,17 @@ NTPOPTS="busybox"
 # Use /dev/vda as a sys disk
 DISKOPTS="-m sys /dev/vda"
 SETUP-CONF
-
-echo y | setup-alpine -e -f setup.conf
-
-poweroff
 BOOTSTRAP
 
-    # FIXME: what is juser?
+    echo "echo y | setup-alpine -e -f setup.conf" | socat STDIO UNIX:command.sock
 
-    # FIXME: why so slow for a 500M disk?!
-    #  try smp and more cpu settings?
+    wait_for 'expect("Installation is complete. Please reboot.")'
+
+    echo poweroff | socat STDIO UNIX:command.sock
 
     echo quit | nc -U control.sock
 
-    # FIXME: just in case
-    # does it exit immediately?
-    # or will it still attempt to write to the wip- file that we're about to rename?
-    # prone to race condition?
-    sleep 2
-    echo DONE
+    # FIXME: does it exit immediately? wait for command.sock to disappear?
 
     mv $BASE_DIR/{wip-,}$LATEST_ALPINE_BASE
   )
