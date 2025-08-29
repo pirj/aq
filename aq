@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 # aq - QEMU wrapper script
-# Usage: aq [new|start|stop|console|exec|rm|ls|ps] [args...]
+# Usage: aq [new|start|stop|console|exec|rm|ls] [args...]
 
 # set -e
 # set -o pipefail Bashism
@@ -14,7 +14,7 @@ aq_help() {
     aq start vm-name
     aq stop vm-name
     aq console vm-name
-    aq exec vm-name shell-script
+    cat script.sh | aq exec vm-name
     aq rm vm-name
     aq ls
 HELP
@@ -25,14 +25,104 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
-LATEST_ALPINE_MAJOR_MINOR=3.22
-LATEST_ALPINE_ISO=alpine-virt-3.22.1-aarch64.iso
+LATEST_ALPINE_VERSION=3.22.1
+LATEST_ALPINE_ISO=alpine-virt-$LATEST_ALPINE_VERSION-aarch64.iso
+LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-aarch64.qcow2
 
-download_base_alpine_iso() {
+download_alpine_iso() {
   mkdir -p $BASE_DIR
   (
     cd $BASE_DIR
     [ -f $LATEST_ALPINE_ISO ] || wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO
+  )
+}
+
+ensure_base_image() {
+  [ -f $BASE_DIR/$LATEST_ALPINE_BASE ] || bootstrap_base_image
+}
+
+bootstrap_base_image() {
+  download_alpine_iso
+  (
+    cd $BASE_DIR
+    qemu-img create -f qcow2 wip-$LATEST_ALPINE_BASE 500M 1>/dev/null
+
+    qemu-system-aarch64 \
+      -machine virt,highmem=on -accel hvf -cpu host -m 1G \
+      -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
+      -drive if=virtio,file=$BASE_DIR/wip-$LATEST_ALPINE_BASE \
+      -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
+      -nic user,model=virtio-net-pci \
+      -rtc base=utc,clock=host \
+      -serial unix:$BASE_DIR/command.sock,server=on,wait=off,nodelay=on \
+      -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/control.sock,server=on,wait=off \
+      -daemonize -pidfile $BASE_DIR/process.pid \
+      -name wip-base-$LATEST_ALPINE_VERSION \
+      -nographic \
+      -parallel none \
+      -monitor none
+
+    # To debug, run:
+    #   nc -U command.sock
+
+    # FIXME: too early? wait for it to boot?
+
+    echo "root" | socat - unix:command.sock
+    socat - unix:command.sock <<BOOTSTRAP
+cat <<SETUP-CONF > setup.conf
+KEYMAPOPTS=none
+
+# Set hostname to 'alpine'
+HOSTNAMEOPTS=alpine
+
+# Set device manager to mdev
+DEVDOPTS=mdev
+
+# Contents of /etc/network/interfaces
+INTERFACESOPTS="auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+hostname alpine-test
+"
+
+# Search domain of example.com, Google public nameserver
+# DNSOPTS="-d example.com 8.8.8.8"
+
+# Set timezone to UTC
+TIMEZONEOPTS="UTC"
+
+# set http/ftp proxy
+PROXYOPTS=none
+
+# Add first mirror (CDN)
+APKREPOSOPTS="-1"
+
+# Create admin user
+USEROPTS="-a -u -g audio,input,video,netdev juser"
+USERSSHKEY="$(cat ~/.ssh/*.pub | head -1)"
+
+# Install Openssh
+SSHDOPTS=openssh
+
+# Use NTP
+NTPOPTS="busybox"
+
+# Use /dev/vda as a sys disk
+DISKOPTS="-m sys /dev/vda"
+SETUP-CONF
+
+echo y | setup-alpine -e -f setup.conf
+
+poweroff
+BOOTSTRAP
+
+# FIXME: what is juser?
+
+# FIXME: why so slow for a 500M disk?!
+
+    mv $BASE_DIR/{wip-,}$LATEST_ALPINE_BASE
   )
 }
 
@@ -47,7 +137,7 @@ aq_new() {
   done
   VM_NAME=$1
   [ -z "$VM_NAME" ] && VM_NAME=$(random_vm_name)
-  download_base_alpine_iso
+  ensure_base_image
   (
     cd $BASE_DIR
     mkdir $VM_NAME
@@ -55,7 +145,7 @@ aq_new() {
     for forward in "${forwards[@]}"; do
       echo $forward >> hostfwd
     done
-    qemu-img create -f qcow2 storage.qcow2 6G 1>/dev/null
+    qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
   )
   stderr Created:
   echo $VM_NAME
@@ -95,7 +185,7 @@ aq_start() {
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
     -bios $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
-    -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
+    -boot order=d \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
     -rtc base=utc,clock=host \
     -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on \

@@ -25,7 +25,7 @@ Out of frustration with existing tools, and failing to grasp the depth of the un
     aq start guest-1
     aq stop guest-1
     aq console guest-1
-    cat bootstrap.sh | aq exec guest-1
+    cat script.sh | aq exec guest-1
     aq exec --all <<SH
       echo ssh-ed25519 AAAAC...YJk foo@bar >> .ssh/authorized_keys
     SH
