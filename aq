@@ -56,7 +56,7 @@ bootstrap_base_image() {
       -machine virt,highmem=on -accel hvf -cpu host -m 1G \
       -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
       -drive file=uefi_vars.fd,format=raw,if=pflash,unit=1 \
-      -drive if=virtio,file=$BASE_DIR/wip-$LATEST_ALPINE_BASE \
+      -drive if=virtio,file=$BASE_DIR/wip-$LATEST_ALPINE_BASE,cache=none \
       -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
       -nic user,model=virtio-net-pci \
       -rtc base=utc,clock=host \
