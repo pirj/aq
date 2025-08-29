@@ -6,8 +6,6 @@
 # set -e
 # set -o pipefail Bashism
 
-BASE_DIR=~/.local/share/aq
-
 aq_help() {
   cat <<HELP
     aq new [-p host-port:vm-port ...] [vm-name]
@@ -25,6 +23,7 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
+BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.1
 LATEST_ALPINE_ISO=alpine-virt-$LATEST_ALPINE_VERSION-aarch64.iso
 LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-aarch64.qcow2
