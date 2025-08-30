@@ -1,23 +1,8 @@
 ## aq
 
-`aq`, a tiny wrapper around QEMU, runs Alpine Linux virtual machines.
+Frustrated with existing tools, and failing to grasp the depth of the underlying problem, built a new tool to fit my needs: `aq`, a tiny wrapper around QEMU, to **run Alpine Linux virtual machines**.
 
-Virtual Machine (VM) has dedicated persistent storage, both for data and for the OS kernel and binaries.
-
-### Rationale
-
-Out of frustration with existing tools, and failing to grasp the depth of the underlying problem, build yet another new tool to fit my needs.
-
-### Features and Anti-features
-
- - Alpine Linux only
- - only the latest Alpine
- - only the latest QEMU
- - text-mode console and CLI
- - no distinction between an image and a instance
- - Mac-only host
- - direct console local access
- - sane defaults
+Features and Anti-features: dedicated persistent storage; Alpine Linux only; most recent Alpine; recent QEMU; text-mode, console and CLI.
 
 ### Cheat Sheet
 
@@ -61,14 +46,14 @@ Run services (sshd, nginx, ...).
 
     # rc-service victoria-metrics start
 
-Remove it:
-
-    $ aq rm aureate-chuckhole
-
 Monitor (advanced QEMU VM control):
 
     $ echo quit | nc -U ~/.local/share/aq/cosset-league/control.sock
     $ nc -U ~/.local/share/aq/cosset-league/control.sock # Interactive
+
+Remove it:
+
+    $ aq rm aureate-chuckhole
 
 ## License
 
