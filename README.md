@@ -26,7 +26,7 @@ Out of frustration with existing tools, and failing to grasp the depth of the un
     aq stop guest-1
     aq console guest-1
     cat script.sh | aq exec guest-1
-    aq exec --all <<SH
+    aq ls | cut -d" " -f1 | xargs -I_ aq exec _ <<SH
       echo ssh-ed25519 AAAAC...YJk foo@bar >> .ssh/authorized_keys
     SH
     aq rm guest-1
