@@ -181,7 +181,7 @@ aq_new() {
     done
     qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
 
-    cp $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd uefi_vars.fd
+    ln -s ../uefi_vars.fd uefi_vars.fd
   )
   stderr Created:
   echo $VM_NAME
