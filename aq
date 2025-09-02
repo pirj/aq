@@ -220,7 +220,7 @@ aq_start() {
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
     -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
-    -drive file=$BASE_DIR/$VM_NAME/uefi_vars.fd,format=raw,if=pflash,unit=1 \
+    -drive file=$BASE_DIR/$VM_NAME/uefi_vars.fd,format=raw,if=pflash,readonly=on,unit=1 \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
     -boot order=d \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
