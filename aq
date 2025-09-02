@@ -176,6 +176,7 @@ aq_new() {
     cd $BASE_DIR
     mkdir $VM_NAME
     cd $VM_NAME
+    touch hostfwd
     for forward in "${forwards[@]}"; do
       echo $forward >> hostfwd
     done
