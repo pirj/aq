@@ -63,15 +63,14 @@ bootstrap_base_image() {
 
     # Start from scratch
     rm -f wip-$LATEST_ALPINE_BASE
+    rm -f uefi-vars.json
 
     qemu-img create -f qcow2 wip-$LATEST_ALPINE_BASE 500M 1>/dev/null
-
-    cp $(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd uefi_vars.fd
 
     qemu-system-aarch64 \
       -machine virt,highmem=on -accel hvf -cpu host -m 1G \
       -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
-      -drive file=uefi_vars.fd,format=raw,if=pflash,unit=1 \
+      -device uefi-vars-sysbus,jsonfile=$BASE_DIR/uefi-vars.json \
       -drive if=virtio,file=$BASE_DIR/wip-$LATEST_ALPINE_BASE,cache=none \
       -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
       -nic user,model=virtio-net-pci \
@@ -154,7 +153,7 @@ BOOTSTRAP
     # FIXME: does it exit immediately? wait for command.sock to disappear?
 
     # OS installed, vars written. Time to set in stone.
-    chmod -w uefi_vars.fd
+    chmod -w uefi-vars.json
     mv $BASE_DIR/{wip-,}$LATEST_ALPINE_BASE
     chmod -w $BASE_DIR/$LATEST_ALPINE_BASE
   )
@@ -182,7 +181,7 @@ aq_new() {
     done
     qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
 
-    ln -s ../uefi_vars.fd uefi_vars.fd
+    cp ../uefi-vars.json .
   )
   stderr Created:
   echo $VM_NAME
@@ -221,7 +220,7 @@ aq_start() {
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
     -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
-    -drive file=$BASE_DIR/$VM_NAME/uefi_vars.fd,format=raw,if=pflash,readonly=on,unit=1 \
+    -device uefi-vars-sysbus,jsonfile=$BASE_DIR/$VM_NAME/uefi-vars.json \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
     -boot order=d \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
