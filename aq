@@ -25,7 +25,9 @@ random_vm_name() {
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.1
+LATEST_ALPINE_MAJOR_MINOR=3.22
 LATEST_ALPINE_ISO=alpine-virt-$LATEST_ALPINE_VERSION-aarch64.iso
+
 LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-aarch64.qcow2
 
 download_alpine_iso() {
