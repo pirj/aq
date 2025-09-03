@@ -197,6 +197,25 @@ hostfwd_directive() {
   echo hostfwd=::$HOST_PORT-:$GUEST_PORT
 }
 
+# Generate a random high port number for temporary SSH forwarding
+random_port() {
+  shuf -i 49152-65535 -n 1
+}
+
+# Add dynamic SSH port forwarding via QEMU monitor
+add_ssh_forward() {
+  VM_NAME=$1
+  HOST_PORT=$2
+  echo "hostfwd_add tcp::${HOST_PORT}-:22" | nc -U $BASE_DIR/$VM_NAME/control.sock
+}
+
+# Remove dynamic SSH port forwarding via QEMU monitor
+remove_ssh_forward() {
+  VM_NAME=$1
+  HOST_PORT=$2
+  echo "hostfwd_remove tcp::${HOST_PORT}-:22" | nc -U $BASE_DIR/$VM_NAME/control.sock
+}
+
 hostfwd() {
   VM_NAME=$1
   (
@@ -216,7 +235,6 @@ aq_start() {
 
   HOST_FORWARDS=$(hostfwd $VM_NAME)
 
-  rm -f $BASE_DIR/$VM_NAME/console.pty # In case of a ungraceful exit
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
     -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
@@ -226,7 +244,6 @@ aq_start() {
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
     -rtc base=utc,clock=host \
     -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on \
-    -serial pty:$BASE_DIR/$VM_NAME/console.pty \
     -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$VM_NAME/control.sock,server=on,wait=off \
     -daemonize -pidfile $BASE_DIR/$VM_NAME/process.pid \
     -name $VM_NAME \
@@ -246,7 +263,11 @@ aq_stop() {
 aq_console() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
-  tio $BASE_DIR/$VM_NAME/console.pty
+
+  SSH_PORT=$(random_port)
+  add_ssh_forward $VM_NAME $SSH_PORT # Add temporary SSH port forwarding
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT root@localhost
+  remove_ssh_forward $VM_NAME $SSH_PORT
 }
 
 aq_exec() {
