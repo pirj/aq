@@ -189,10 +189,7 @@ aq_new() {
   echo $VM_NAME
 }
 
-# Support 2222:22, or just 22, returns formatted hostfwd=tcp::2222-:22
-# TODO: support protocol: tcp/udp
-#       support hostaddr
-#       support guestaddr
+# Supports 2222:22, or just 22, returns formatted hostfwd=tcp::2222-:22
 hostfwd_directive() {
   HOST_PORT=$(echo $1 | cut -d: -f1)
   GUEST_PORT=$(echo $1 | cut -d: -f2)
