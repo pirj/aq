@@ -46,7 +46,7 @@ wait_for() {
 
   tio \
     --mute \
-    --script "$1" \
+    --script "$SCRIPT" \
     --script-run once \
     command.pty \
     --exec 'echo ""'
