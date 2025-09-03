@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 
 # aq - QEMU wrapper script
 # Usage: aq [new|start|stop|console|exec|rm|ls] [args...]
