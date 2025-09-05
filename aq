@@ -3,8 +3,10 @@
 # aq - QEMU wrapper script
 # Usage: aq [new|start|stop|console|exec|rm|ls] [args...]
 
-# set -e
-# set -o pipefail Bashism
+[ -z "$DEBUG" ] || set -x
+set -eu
+set -o pipefail
+set -fC
 
 aq_help() {
   cat <<HELP
@@ -166,12 +168,19 @@ stderr() {
 }
 
 aq_new() {
-  forwards=()
-  while [ "$1" = "-p" ]; do
-    forwards+=($2); shift; shift
+  forwards=("")
+  while [ $# -gt 0 ]; do
+    name=$1
+    fwd=$2
+    if [ "$name" = "-p" ]; then
+      forwards+=($fwd); shift; shift
+    fi
   done
-  VM_NAME=$1
-  [ -z "$VM_NAME" ] && VM_NAME=$(random_vm_name)
+  if [ $# -gt 0 ]; then
+    VM_NAME=$1
+  else
+    VM_NAME=$(random_vm_name)
+  fi
   ensure_base_image
   (
     cd $BASE_DIR
