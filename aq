@@ -168,8 +168,8 @@ stderr() {
 }
 
 aq_new() {
-  forwards=("")
-  while [ $# -gt 0 ]; do
+  forwards=()
+  while [ $# -gt 1 ]; do
     name=$1
     fwd=$2
     if [ "$name" = "-p" ]; then
@@ -193,6 +193,7 @@ aq_new() {
     qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
 
     cp ../uefi-vars.json .
+    chmod +x uefi-vars.json
   )
   stderr Created:
   echo $VM_NAME
@@ -233,7 +234,7 @@ hostfwd() {
       directives+=($(hostfwd_directive $forward))
     done
     IFS=,
-    echo "${directives[*]}"
+    [ ${#directives[@]} -gt 0 ] && echo "${directives[*]}"
   )
 }
 
