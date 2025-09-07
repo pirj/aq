@@ -195,7 +195,7 @@ aq_new() {
     qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
 
     cp ../uefi-vars.json .
-    chmod +x uefi-vars.json
+    chmod +w uefi-vars.json
   )
   stderr Created:
   echo $VM_NAME
