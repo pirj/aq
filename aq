@@ -30,7 +30,7 @@ LATEST_ALPINE_VERSION=3.22.1
 LATEST_ALPINE_MAJOR_MINOR=3.22
 LATEST_ALPINE_ISO=alpine-virt-$LATEST_ALPINE_VERSION-aarch64.iso
 
-LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-aarch64.qcow2
+LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-aarch64.raw
 
 download_alpine_iso() {
   mkdir -p $BASE_DIR
@@ -69,13 +69,13 @@ bootstrap_base_image() {
     rm -f wip-$LATEST_ALPINE_BASE
     rm -f uefi-vars.json
 
-    qemu-img create -f qcow2 wip-$LATEST_ALPINE_BASE 500M 1>/dev/null
+    qemu-img create -f raw wip-$LATEST_ALPINE_BASE 500M 1>/dev/null
 
     qemu-system-aarch64 \
       -machine virt,highmem=on -accel hvf -cpu host -m 1G \
       -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
       -device uefi-vars-sysbus,jsonfile=$BASE_DIR/uefi-vars.json \
-      -drive if=virtio,file=$BASE_DIR/wip-$LATEST_ALPINE_BASE,cache=none \
+      -drive if=virtio,file=$BASE_DIR/wip-$LATEST_ALPINE_BASE,format=raw,cache=none \
       -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
       -nic user,model=virtio-net-pci \
       -rtc base=utc,clock=host \
@@ -192,7 +192,7 @@ aq_new() {
         echo $forward >> hostfwd.conf
       done
     fi
-    qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
+    qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F raw -f qcow2 storage.qcow2 2G 1>/dev/null
 
     cp ../uefi-vars.json .
     chmod +w uefi-vars.json
