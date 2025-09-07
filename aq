@@ -146,7 +146,10 @@ DISKOPTS="-m sys /dev/vda"
 SETUP-CONF
 BOOTSTRAP
 
-    echo "echo y | setup-alpine -e -f setup.conf" | socat STDIO UNIX:command.sock
+    # Install mkfs.ext4 (can be done without the network)
+    echo "apk add e2fsprogs" | socat STDIO UNIX:command.sock
+
+    echo "echo y | ROOTFS=ext4 setup-alpine -e -f setup.conf" | socat STDIO UNIX:command.sock
 
     wait_for 'expect("Installation is complete. Please reboot.")'
 
