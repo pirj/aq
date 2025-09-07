@@ -186,10 +186,10 @@ aq_new() {
     cd $BASE_DIR
     mkdir $VM_NAME
     cd $VM_NAME
-    touch hostfwd
+    touch hostfwd.conf
     if [ ${#forwards[@]} -gt 0 ]; then
       for forward in "${forwards[@]}"; do
-        echo $forward >> hostfwd
+        echo $forward >> hostfwd.conf
       done
     fi
     qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
@@ -232,7 +232,7 @@ hostfwd() {
   (
     cd $BASE_DIR/$VM_NAME
     directives=()
-    for forward in $(cat hostfwd); do
+    for forward in $(cat hostfwd.conf); do
       directives+=($(hostfwd_directive $forward))
     done
     IFS=,
