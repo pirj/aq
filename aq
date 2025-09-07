@@ -153,7 +153,11 @@ BOOTSTRAP
 
     wait_for 'expect("Installation is complete. Please reboot.")'
 
-    echo "rm setup.conf" | socat STDIO UNIX:command.sock
+    cat <<SH  | socat STDIO UNIX:command.sock
+mount /dev/vda3 /mnt
+rm /mnt/root/setup.conf
+umount /mnt
+SH
 
     echo poweroff | socat STDIO UNIX:command.sock
 
