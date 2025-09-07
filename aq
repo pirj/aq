@@ -133,7 +133,7 @@ APKREPOSOPTS="-1"
 
 # Create admin user
 USEROPTS="-g floppy nouser"
-ROOTSSHKEY="$(cat ~/.ssh/*.pub | head -1)"
+ROOTSSHKEY="$(cat $HOME/.ssh/*.pub | head -1)"
 
 # Install Openssh
 SSHDOPTS=openssh
