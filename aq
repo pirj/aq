@@ -284,6 +284,7 @@ aq_stop() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
   echo quit | nc -U $BASE_DIR/$VM_NAME/control.sock 1>/dev/null
+  stderr "Stopped" $VM_NAME
 }
 
 aq_console() {
@@ -306,7 +307,9 @@ aq_exec() {
 aq_rm() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq rm <vm-name>`.' && exit 1
-  stderr "Not implemented yet"
+  aq_stop $VM_NAME
+  rm -rf $BASE_DIR/$VM_NAME
+  stderr "Removed" $VM_NAME
 }
 
 aq_ls() {
