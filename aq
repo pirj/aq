@@ -150,7 +150,11 @@ BOOTSTRAP
 
     wait_for 'expect("Installation is complete. Please reboot.")'
 
+    echo "rm setup.conf" | socat STDIO UNIX:command.sock
+
     echo poweroff | socat STDIO UNIX:command.sock
+
+    # FIXME: does it power off immediately?
 
     echo quit | nc -U control.sock
 
