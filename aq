@@ -187,9 +187,11 @@ aq_new() {
     mkdir $VM_NAME
     cd $VM_NAME
     touch hostfwd
-    for forward in "${forwards[@]}"; do
-      echo $forward >> hostfwd
-    done
+    if [ ${#forwards[@]} -gt 0 ]; then
+      for forward in "${forwards[@]}"; do
+        echo $forward >> hostfwd
+      done
+    fi
     qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F qcow2 -f qcow2 storage.qcow2 2G 1>/dev/null
 
     cp ../uefi-vars.json .
