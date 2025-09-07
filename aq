@@ -236,7 +236,11 @@ hostfwd() {
       directives+=($(hostfwd_directive $forward))
     done
     IFS=,
-    [ ${#directives[@]} -gt 0 ] && echo "${directives[*]}"
+    if [ ${#directives[@]} -gt 0 ]; then
+      echo "${directives[*]}"
+    else
+      echo ""
+    fi
   )
 }
 
@@ -244,7 +248,7 @@ aq_start() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
 
-  HOST_FORWARDS=$(hostfwd $VM_NAME)
+  HOST_FORWARDS="$(hostfwd $VM_NAME)"
 
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
