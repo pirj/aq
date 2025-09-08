@@ -16,7 +16,7 @@ Features and Anti-features: dedicated persistent storage; Alpine Linux only; mos
     SH
     aq rm guest-1
     aq ls
-    aq ls | grep Running
+    aq ls | grep On
     aq ls | grep guest-1
 
 ### Install

@@ -341,7 +341,21 @@ aq_rm() {
 }
 
 aq_ls() {
-  stderr "Not implemented yet"
+  [ ! -d "$BASE_DIR" ] && return 0
+
+  (
+    cd "$BASE_DIR"
+    for vm_dir in $(ls); do
+      [ ! -d "$vm_dir" ] && continue
+      vm_name=$(basename "$vm_dir")
+      if [ -f "$vm_dir/process.pid" ] && kill -0 "$(cat "$vm_dir/process.pid" 2>/dev/null)" 2>/dev/null; then
+        status="On"
+      else
+        status="Off"
+      fi
+      printf "%-20s %s\n" "$vm_name" "$status"
+    done
+  )
 }
 
 COMMAND=$1
