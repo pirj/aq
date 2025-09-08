@@ -207,6 +207,8 @@ aq_new() {
 
     cp ../uefi-vars.json .
     chmod +w uefi-vars.json
+
+    touch .needs_first_boot_setup
   )
   stderr Created:
   echo $VM_NAME
@@ -255,11 +257,28 @@ hostfwd() {
   )
 }
 
+first_boot_setup() {
+  VM_NAME=$1
+  (
+    cd $BASE_DIR/$VM_NAME
+    wait_for 'expect("login: "); write("root\n")'
+    cat <<FIRST | socat STDIO UNIX:command.sock
+apk add partx sfdisk e2fsprogs-extra
+echo ",+" | sfdisk --no-reread -N 3 /dev/vda --force
+partx --update --nr 3 /dev/vda
+resize2fs /dev/vda3
+FIRST
+  )
+}
+
 aq_start() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
 
   HOST_FORWARDS="$(hostfwd $VM_NAME)"
+
+  # Check if first boot setup is needed
+  FIRST_BOOT_MARKER="$BASE_DIR/$VM_NAME/.needs_first_boot_setup"
 
   qemu-system-aarch64 \
     -machine virt,highmem=on -accel hvf -cpu host -m 1G \
@@ -276,6 +295,12 @@ aq_start() {
     -nographic \
     -parallel none \
     -monitor none
+
+  if [ -f "$FIRST_BOOT_MARKER" ]; then
+    stderr "First boot detected, performing automated setup..."
+    first_boot_setup "$VM_NAME"
+    rm "$FIRST_BOOT_MARKER"
+  fi
 
   stderr Started $VM_NAME
 }
