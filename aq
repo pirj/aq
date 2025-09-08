@@ -324,9 +324,12 @@ aq_console() {
 
 aq_exec() {
   VM_NAME=$1
-  [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name> <shell-script>`.' && exit 1
-  nc -U app.sock
-  stderr "Not implemented yet"
+  [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name>`.' && exit 1
+
+  SSH_PORT=$(random_port)
+  add_ssh_forward $VM_NAME $SSH_PORT
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT root@localhost 'sh -s'
+  remove_ssh_forward $VM_NAME $SSH_PORT
 }
 
 aq_rm() {
