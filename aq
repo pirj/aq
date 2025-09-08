@@ -237,7 +237,7 @@ add_ssh_forward() {
 remove_ssh_forward() {
   VM_NAME=$1
   HOST_PORT=$2
-  echo "hostfwd_remove tcp::${HOST_PORT}-:22" | nc -U $BASE_DIR/$VM_NAME/control.sock
+  echo "hostfwd_remove tcp::${HOST_PORT}" | nc -U $BASE_DIR/$VM_NAME/control.sock
 }
 
 hostfwd() {
