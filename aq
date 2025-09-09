@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# aq - QEMU wrapper script
+# aq - QEMU wrapper to run Alpine Linux VMs on MacOS
 # Usage: aq [new|start|stop|console|exec|rm|ls] [args...]
 
 [ -z "$DEBUG" ] || set -x

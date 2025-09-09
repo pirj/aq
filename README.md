@@ -1,6 +1,6 @@
 ## aq
 
-Frustrated with existing tools, and failing to grasp the depth of the underlying problem, built a new tool to fit my needs: `aq`, a tiny wrapper around QEMU, to **run Alpine Linux virtual machines**.
+Frustrated with existing tools, and failing to grasp the depth of the underlying problem, built a new tool to fit my needs: `aq`, a QEMU wrapper to run Alpine Linux virtual machines** on MacOS.
 
 Features and Anti-features: dedicated persistent storage; Alpine Linux only; most recent Alpine; recent QEMU; text-mode, console and CLI.
 
@@ -36,7 +36,7 @@ Console into it:
 
 Or run non-interactive commands:
 
-    $ aq exec aureate-chuckhole -- ps
+    $ aq exec aureate-chuckhole ps
 
 Install packages:
 
@@ -57,4 +57,4 @@ Remove it:
 
 ## License
 
-AQ is released under the [MIT License](https://opensource.org/licenses/MIT).
+aq is released under the [MIT License](https://opensource.org/licenses/MIT).
