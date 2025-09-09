@@ -15,6 +15,12 @@ aq_help() {
     aq stop vm-name
     aq console vm-name
     cat script.sh | aq exec vm-name
+    aq exec vm-name nginx status
+    aq exec vm-name < script.sh
+    aq exec vm-name <<SH
+      apk add nginx
+      rc-service nginx start
+    SH
     aq rm vm-name
     aq ls
 HELP
@@ -325,10 +331,21 @@ aq_console() {
 aq_exec() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name>`.' && exit 1
+  shift
 
   SSH_PORT=$(random_port)
   add_ssh_forward $VM_NAME $SSH_PORT
-  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT root@localhost 'sh -s'
+
+  if [ -t 0 ] && [ $# -gt 0 ]; then # No stdin, have command-line arguments - execute them as a command
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT root@localhost "$@"
+  elif [ ! -t 0 ]; then # Have stdin - execute it as a script
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT root@localhost 'sh -s'
+  else
+    stderr 'Error: No command or stdin provided. Usage: `aq exec <vm-name> [command]` or pipe input.'
+    remove_ssh_forward $VM_NAME $SSH_PORT
+    exit 1
+  fi
+
   remove_ssh_forward $VM_NAME $SSH_PORT
 }
 
