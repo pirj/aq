@@ -11,6 +11,8 @@ Features and Anti-features: dedicated persistent storage; Alpine Linux only; mos
     aq stop guest-1
     aq console guest-1
     cat script.sh | aq exec guest-1
+    aq scp -r config.toml guest-1:/etc/app/
+    aq scp guest-1:/var/log/app.log ./logs/
     aq ls | cut -d" " -f1 | xargs -I_ aq exec _ <<SH
       echo ssh-ed25519 AAAAC...YJk foo@bar >> .ssh/authorized_keys
     SH
@@ -38,11 +40,16 @@ Or run non-interactive commands:
 
     $ aq exec aureate-chuckhole ps
 
+Copy files to/from VMs:
+
+    $ aq scp -r nginx.conf aureate-chuckhole:/etc/nginx
+    $ aq scp -r aureate-chuckhole:/var/log/ ./vm-logs/
+
 Install packages:
 
     # apk update && apk add victoria-metrics
 
-Run services (sshd, nginx, ...).
+Run services (nginx, ...).
 
     # rc-service victoria-metrics start
 

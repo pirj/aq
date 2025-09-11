@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.31 "Tinfoil" 12-Sep-2025
+
+### New Features
+
+ - `aq scp` command for copying files between host and VMs. Mimics the `scp` command
+
 ## 1.0 "Alpemu" 10-Sep-2025
 
 First stable release of aq - a QEMU wrapper for running Alpine Linux VMs on MacOS.

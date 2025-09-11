@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # aq - QEMU wrapper to run Alpine Linux VMs on MacOS
-# Usage: aq [new|start|stop|console|exec|rm|ls] [args...]
+# Usage: aq [new|start|stop|console|exec|scp|rm|ls] [args...]
 
 [ -z "$DEBUG" ] || set -x
 set -eu
@@ -21,6 +21,8 @@ aq_help() {
       apk add nginx
       rc-service nginx start
     SH
+    aq scp [-r] [-p] file1 file2... vm-name:/path
+    aq scp [-r] [-p] vm-name:/file host-path
     aq rm vm-name
     aq ls
     aq --version
@@ -36,7 +38,7 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
-VERSION=1.0
+VERSION=1.1.31
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.1
@@ -356,6 +358,110 @@ aq_exec() {
   remove_ssh_forward $VM_NAME $SSH_PORT
 }
 
+aq_scp() {
+  [ $# -lt 2 ] && stderr 'Error: At least source and destination required. Usage: `aq scp [-r] [-p] source... destination`.' && exit 1
+
+  local scp_opts=()
+  local sources=()
+  local destination=""
+  local vm_name=""
+  local is_vm_to_host=false
+
+  # Parse options (-r, -p, etc.)
+  while [[ $# -gt 0 && $1 == -* ]]; do
+    scp_opts+=("$1")
+    shift
+  done
+
+  [ $# -lt 2 ] && stderr 'Error: At least source and destination required after options.' && exit 1
+
+  # Last argument is destination
+  destination="${@: -1}"
+  # All but last are sources
+  sources=("${@:1:$(($#-1))}")
+
+  # Determine direction and extract VM name
+  if [[ "$destination" == *:* ]]; then
+    # Host to VM
+    vm_name="${destination%%:*}"
+    [ -z "$vm_name" ] && stderr 'Error: VM name required in destination.' && exit 1
+
+    # Validate all sources are on host (no colons)
+    for source in "${sources[@]}"; do
+      if [[ "$source" == *:* ]]; then
+        stderr 'Error: Cannot mix VM and host sources when copying to VM.' && exit 1
+      fi
+    done
+  else
+    # VM to host
+    is_vm_to_host=true
+
+    # First source must contain VM name
+    first_source="${sources[0]}"
+    if [[ "$first_source" != *:* ]]; then
+      stderr 'Error: First source must specify VM name (vm-name:/path) when destination is on host.' && exit 1
+    fi
+
+    vm_name="${first_source%%:*}"
+    [ -z "$vm_name" ] && stderr 'Error: VM name required in first source.' && exit 1
+
+    # Validate remaining sources
+    for source in "${sources[@]:1}"; do
+      if [[ "$source" == *:* ]]; then
+        source_vm="${source%%:*}"
+        if [ -n "$source_vm" ] && [ "$source_vm" != "$vm_name" ]; then
+          stderr "Error: Inconsistent VM names: '$vm_name' vs '$source_vm'." && exit 1
+        fi
+      else
+        stderr 'Error: All sources must be VM paths (vm-name:/path or :/path) when destination is on host.' && exit 1
+      fi
+    done
+
+    # Normalize sources - prepend vm_name to those starting with ":"
+    local normalized_sources=()
+    for source in "${sources[@]}"; do
+      if [[ "$source" == :* ]]; then
+        normalized_sources+=("${vm_name}${source}")
+      else
+        normalized_sources+=("$source")
+      fi
+    done
+    sources=("${normalized_sources[@]}")
+  fi
+
+  # Set up SSH forward
+  SSH_PORT=$(random_port)
+  add_ssh_forward "$vm_name" "$SSH_PORT"
+
+  # Convert VM paths to use localhost with SSH port
+  local scp_sources=()
+  local scp_destination="$destination"
+
+  if [ "$is_vm_to_host" = true ]; then
+    # Convert VM sources to SSH format
+    for source in "${sources[@]}"; do
+      if [[ "$source" == *:* ]]; then
+        vm_path="${source#*:}"
+        scp_sources+=("root@localhost:${vm_path}")
+      fi
+    done
+  else
+    # Host to VM - convert destination
+    vm_path="${destination#*:}"
+    scp_destination="root@localhost:${vm_path}"
+    scp_sources=("${sources[@]}")
+  fi
+
+  # Execute scp command
+  scp "${scp_opts[@]}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "$SSH_PORT" \
+    "${scp_sources[@]}" "$scp_destination"
+
+  local scp_exit_code=$?
+  remove_ssh_forward "$vm_name" "$SSH_PORT"
+
+  exit $scp_exit_code
+}
+
 aq_rm() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq rm <vm-name>`.' && exit 1
@@ -389,6 +495,7 @@ case $COMMAND in
   stop) aq_stop $* ;;
   console) aq_console $* ;;
   exec) aq_exec $* ;;
+  scp) aq_scp $* ;;
   rm) aq_rm $* ;;
   ls) aq_ls ;;
   "--version") aq_version ;;
