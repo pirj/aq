@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2 "Sticky" 12-Sep-2025
+
+### Improvements
+
+ - VMs now use persistent SSH ports allocated on start and removed on stop
+ - `aq ls` now displays SSH port information for running VMs
+
 ## 1.1.31 "Tinfoil" 12-Sep-2025
 
 ### New Features

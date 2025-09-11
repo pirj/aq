@@ -26,6 +26,8 @@
 
 ## 1.x
 
+- [x] reuse the same SSH forwarded port instead of allocating several
+
 - [ ] remove excessive output around aq console/exec; also the rest like first boot etc
 
 - [ ] install those to the base image instead of in each vm! apk add partx sfdisk e2fsprogs-extra
@@ -35,8 +37,6 @@
         -sh: can't create DISKOPTS=-m sys /dev/vda: nonexistent directory
         alpine:~#
       takes a while for vm to start and aq console <vm> fails until then
-
-- [ ] reuse the same SSH forwarded port instead of allocating several
 
 - [ ] detect occupied host ports during random port allocation
 

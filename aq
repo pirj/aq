@@ -38,7 +38,7 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
-VERSION=1.1.31
+VERSION=1.2
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.1
@@ -241,6 +241,21 @@ random_port() {
   shuf -i 49152-65535 -n 1
 }
 
+# Get or generate a persistent SSH port for a VM
+get_persistent_ssh_port() {
+  VM_NAME=$1
+  SSH_PORT_FILE="$BASE_DIR/$VM_NAME/ssh-port.conf"
+
+  if [ -f "$SSH_PORT_FILE" ]; then
+    cat "$SSH_PORT_FILE"
+  else
+    # Generate a new port and store it
+    NEW_PORT=$(random_port)
+    echo "$NEW_PORT" > "$SSH_PORT_FILE"
+    echo "$NEW_PORT"
+  fi
+}
+
 # Add dynamic SSH port forwarding via QEMU monitor
 add_ssh_forward() {
   VM_NAME=$1
@@ -253,6 +268,29 @@ remove_ssh_forward() {
   VM_NAME=$1
   HOST_PORT=$2
   echo "hostfwd_remove tcp::${HOST_PORT}" | nc -U $BASE_DIR/$VM_NAME/control.sock
+}
+
+# Get SSH connection details for a VM
+get_vm_ssh_details() {
+  VM_NAME=$1
+  SSH_PORT=$(get_persistent_ssh_port "$VM_NAME")
+  echo "$SSH_PORT"
+}
+
+# Execute SSH command on VM with common options
+vm_ssh() {
+  VM_NAME=$1
+  shift
+  SSH_PORT=$(get_vm_ssh_details "$VM_NAME")
+  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p "$SSH_PORT" root@localhost "$@"
+}
+
+# Execute SCP command with VM using common options
+vm_scp() {
+  local vm_name="$1"
+  shift
+  local ssh_port=$(get_vm_ssh_details "$vm_name")
+  scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "$ssh_port" "$@"
 }
 
 hostfwd() {
@@ -317,12 +355,25 @@ aq_start() {
     rm "$FIRST_BOOT_MARKER"
   fi
 
+  # Set up persistent SSH forwarding
+  SSH_PORT=$(get_persistent_ssh_port "$VM_NAME")
+  add_ssh_forward "$VM_NAME" "$SSH_PORT"
+
   stderr Started $VM_NAME
 }
 
 aq_stop() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
+
+  # Remove SSH forwarding if it exists
+  SSH_PORT_FILE="$BASE_DIR/$VM_NAME/ssh-port.conf"
+  if [ -f "$SSH_PORT_FILE" ]; then
+    SSH_PORT=$(cat "$SSH_PORT_FILE")
+    remove_ssh_forward "$VM_NAME" "$SSH_PORT" 2>/dev/null
+    rm -f "$SSH_PORT_FILE"
+  fi
+
   echo quit | nc -U $BASE_DIR/$VM_NAME/control.sock 1>/dev/null
   stderr "Stopped" $VM_NAME
 }
@@ -331,10 +382,7 @@ aq_console() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
 
-  SSH_PORT=$(random_port)
-  add_ssh_forward $VM_NAME $SSH_PORT # Add temporary SSH port forwarding
-  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT root@localhost
-  remove_ssh_forward $VM_NAME $SSH_PORT
+  vm_ssh "$VM_NAME"
 }
 
 aq_exec() {
@@ -342,20 +390,14 @@ aq_exec() {
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name>`.' && exit 1
   shift
 
-  SSH_PORT=$(random_port)
-  add_ssh_forward $VM_NAME $SSH_PORT
-
   if [ -t 0 ] && [ $# -gt 0 ]; then # No stdin, have command-line arguments - execute them as a command
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT root@localhost "$@"
+    vm_ssh "$VM_NAME" "$@"
   elif [ ! -t 0 ]; then # Have stdin - execute it as a script
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT root@localhost 'sh -s'
+    vm_ssh "$VM_NAME" 'sh -s'
   else
     stderr 'Error: No command or stdin provided. Usage: `aq exec <vm-name> [command]` or pipe input.'
-    remove_ssh_forward $VM_NAME $SSH_PORT
     exit 1
   fi
-
-  remove_ssh_forward $VM_NAME $SSH_PORT
 }
 
 aq_scp() {
@@ -429,10 +471,6 @@ aq_scp() {
     sources=("${normalized_sources[@]}")
   fi
 
-  # Set up SSH forward
-  SSH_PORT=$(random_port)
-  add_ssh_forward "$vm_name" "$SSH_PORT"
-
   # Convert VM paths to use localhost with SSH port
   local scp_sources=()
   local scp_destination="$destination"
@@ -452,14 +490,8 @@ aq_scp() {
     scp_sources=("${sources[@]}")
   fi
 
-  # Execute scp command
-  scp "${scp_opts[@]}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "$SSH_PORT" \
-    "${scp_sources[@]}" "$scp_destination"
-
-  local scp_exit_code=$?
-  remove_ssh_forward "$vm_name" "$SSH_PORT"
-
-  exit $scp_exit_code
+  # Execute scp command using helper
+  vm_scp "$vm_name" "${scp_opts[@]}" "${scp_sources[@]}" "$scp_destination"
 }
 
 aq_rm() {
@@ -483,7 +515,15 @@ aq_ls() {
       else
         status="Off"
       fi
-      printf "%-20s %s\n" "$vm_name" "$status"
+
+      # Get SSH port if available
+      ssh_port=""
+      if [ -f "$vm_dir/ssh-port.conf" ]; then
+        ssh_port=$(cat "$vm_dir/ssh-port.conf")
+        ssh_port=":$ssh_port"
+      fi
+
+      printf "%-20s %-4s %s\n" "$vm_name" "$status" "$ssh_port"
     done
   )
 }
