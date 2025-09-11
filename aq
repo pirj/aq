@@ -23,13 +23,20 @@ aq_help() {
     SH
     aq rm vm-name
     aq ls
+    aq --version
 HELP
+}
+
+aq_version() {
+  stderr aq $VERSION - QEMU wrapper to run Alpine Linux VMs on MacOS
 }
 
 random_vm_name() {
   # Approximately 200K words, 2^32 random names
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
+
+VERSION=1.0
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.1
@@ -375,8 +382,7 @@ aq_ls() {
   )
 }
 
-COMMAND=$1
-shift
+[ $# -gt 0 ] && { COMMAND=$1; shift; } || COMMAND=""
 case $COMMAND in
   new) aq_new $* ;;
   start) aq_start $* ;;
@@ -385,6 +391,7 @@ case $COMMAND in
   exec) aq_exec $* ;;
   rm) aq_rm $* ;;
   ls) aq_ls ;;
+  "--version") aq_version ;;
   "" | "help" | "-h" | "--help") aq_help ;;
   *) stderr "Error: Unknown command $COMMAND."; exit 1 ;;
 esac
