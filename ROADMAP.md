@@ -42,7 +42,7 @@
 
 - [?] resize (down) the base image after OS install to reduce occupied host disk space
 
-- [ ] alpemu.dev
+- [ ] alpemu.dev - starts with full-screen terminal, basic commands to start a machine, run something on it, and then more terminals spawn and like a few dozen. on scroll
 - [ ] formula/tap. dependencies: tio! socat! qemu! zstd (image compression)?
 - [ ] autotests
 - [ ] add error when console/exec stopped instance
@@ -53,6 +53,7 @@
 - [ ] further improve images performance cluster_size=64k,compression_type=zstd
 - [ ] use Alpine cloud images (see details below)
 - [ ] snapshots (see details below)
+- [ ] can be used as a backend for containers.dev? https://github.com/microsoft/vscode-remote-try-rust/blob/main/.devcontainer/devcontainer.json
 - [ ] benchmarks/feature rundown vs Docker/Macpine/OrbStack/Podman/Virsh
 - [ ] bash completions
 
