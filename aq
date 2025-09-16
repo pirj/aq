@@ -38,7 +38,7 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
-VERSION=1.2
+VERSION=1.3
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.1
@@ -310,11 +310,19 @@ hostfwd() {
   )
 }
 
+wait_for_boot() {
+  VM_NAME=$1
+  (
+    cd $BASE_DIR/$VM_NAME
+    wait_for 'expect("login: ")'
+  )
+}
+
 first_boot_setup() {
   VM_NAME=$1
   (
     cd $BASE_DIR/$VM_NAME
-    wait_for 'expect("login: "); write("root\n")'
+    echo "root" | socat STDIO UNIX:command.sock
     cat <<FIRST | socat STDIO UNIX:command.sock
 apk add partx sfdisk e2fsprogs-extra
 echo ",+" | sfdisk --no-reread -N 3 /dev/vda --force
@@ -348,6 +356,8 @@ aq_start() {
     -nographic \
     -parallel none \
     -monitor none
+
+  wait_for_boot "$VM_NAME"
 
   if [ -f "$FIRST_BOOT_MARKER" ]; then
     stderr "First boot detected, performing automated setup..."

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3 "Polite" 16-Sep-2025
+
+### Improvements
+
+- `aq start` now always waits for the VM to boot: no surprises using `aq exec` or `aq console` right after `aq start`
+
 ## 1.2 "Sticky" 12-Sep-2025
 
 ### Improvements

@@ -57,3 +57,12 @@ Technical choices:
 - Networking: User-mode with configurable port forwarding
 
 This delivers maximum performance on the target platform while maintaining simplicity.
+
+## Boot Synchronization: Always Wait for System Ready
+
+Decision: `aq start` always waits for the VM to reach a login prompt.
+
+Rationale:
+- Race condition avoidance: Scripts using `aq start` followed by `aq exec` or `aq console` no longer fail due to the VM not being fully booted
+- Automation-friendly: No custom wait loops needed for scripting
+- Consistency: Provides predictable behavior regardless of VM state or system load
