@@ -303,6 +303,11 @@ hostfwd() {
   )
 }
 
+vm_exists() {
+  VM_NAME=$1
+  [ -d "$BASE_DIR/$VM_NAME" ]
+}
+
 is_vm_running() {
   VM_NAME=$1
   [ -f "$BASE_DIR/$VM_NAME/process.pid" ] && kill -0 "$(cat "$BASE_DIR/$VM_NAME/process.pid" 2>/dev/null)" 2>/dev/null
@@ -326,6 +331,7 @@ FIRST
 aq_start() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
+  ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
 
   # Check if VM is already running
   if is_vm_running "$VM_NAME"; then
@@ -378,6 +384,7 @@ aq_start() {
 aq_stop() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
+  ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
 
   # Clean up SSH port allocation file
   rm -f "$BASE_DIR/$VM_NAME/ssh-port.conf"
@@ -391,6 +398,7 @@ aq_stop() {
 aq_console() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
+  ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
 
   vm_ssh "$VM_NAME"
 }
@@ -398,6 +406,7 @@ aq_console() {
 aq_exec() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name>`.' && exit 1
+  ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
   shift
 
   if [ -t 0 ] && [ $# -gt 0 ]; then # No stdin, have command-line arguments - execute them as a command
@@ -481,6 +490,9 @@ aq_scp() {
     sources=("${normalized_sources[@]}")
   fi
 
+  # Check if VM exists
+  ! vm_exists "$vm_name" && stderr "Error: VM '$vm_name' does not exist." && exit 1
+
   # Convert VM paths to use localhost with SSH port
   local scp_sources=()
   local scp_destination="$destination"
@@ -507,6 +519,8 @@ aq_scp() {
 aq_rm() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq rm <vm-name>`.' && exit 1
+  ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
+
   aq_stop $VM_NAME
   rm -rf $BASE_DIR/$VM_NAME
   stderr "Removed" $VM_NAME

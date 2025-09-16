@@ -5,6 +5,7 @@
 ### Improvements
 
 - Set VM hostname to the VM name on first boot
+- Added clear error messages when attempting to operate on non-existent VMs
 
 ### Bug Fixes
 
