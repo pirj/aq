@@ -7,6 +7,7 @@
 - Fixed `aq scp` unbound variable error when no options are provided
 - Added clear error message when attempting to start an already running VM
 - Fixed `aq stop` error when attempting to stop a VM that was already powered off
+- Made `aq stop` idempotent
 
 ## 1.3 "Polite" 16-Sep-2025
 

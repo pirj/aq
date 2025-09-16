@@ -383,8 +383,10 @@ aq_stop() {
   # Clean up SSH port allocation file
   rm -f "$BASE_DIR/$VM_NAME/ssh-port.conf"
 
-  echo quit | nc -U $BASE_DIR/$VM_NAME/control.sock 1>/dev/null
-  stderr "Stopped" $VM_NAME
+  # Only attempt to quit QEMU if VM is actually running
+  if is_vm_running "$VM_NAME"; then
+    echo quit | nc -U $BASE_DIR/$VM_NAME/control.sock 1>/dev/null
+  fi
 }
 
 aq_console() {
