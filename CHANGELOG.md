@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4 "Repellent" 16-Sep-2025
 
 ### Improvements
 
