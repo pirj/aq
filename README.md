@@ -13,7 +13,7 @@ Features and Anti-features: dedicated persistent storage; Alpine Linux only; mos
     cat script.sh | aq exec guest-1
     aq scp -r config.toml guest-1:/etc/app/
     aq scp guest-1:/var/log/app.log ./logs/
-    aq ls | cut -d" " -f1 | xargs -I_ aq exec _ <<SH
+    aq ls | cut -d" " -f1 | xargs -n1 -I_ aq exec _ <<SH
       echo ssh-ed25519 AAAAC...YJk foo@bar >> .ssh/authorized_keys
     SH
     aq rm guest-1
