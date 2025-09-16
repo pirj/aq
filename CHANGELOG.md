@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- Fixed `aq scp` unbound variable error when no options are provided
+
 ## 1.3 "Polite" 16-Sep-2025
 
 ### Improvements
