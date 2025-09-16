@@ -318,6 +318,11 @@ wait_for_boot() {
   )
 }
 
+is_vm_running() {
+  VM_NAME=$1
+  [ -f "$BASE_DIR/$VM_NAME/process.pid" ] && kill -0 "$(cat "$BASE_DIR/$VM_NAME/process.pid" 2>/dev/null)" 2>/dev/null
+}
+
 first_boot_setup() {
   VM_NAME=$1
   (
@@ -335,6 +340,12 @@ FIRST
 aq_start() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq start <vm-name>`.' && exit 1
+
+  # Check if VM is already running
+  if is_vm_running "$VM_NAME"; then
+    stderr "Error: VM '$VM_NAME' is already running."
+    exit 1
+  fi
 
   HOST_FORWARDS="$(hostfwd $VM_NAME)"
 
@@ -520,7 +531,7 @@ aq_ls() {
     for vm_dir in $(ls); do
       [ ! -d "$vm_dir" ] && continue
       vm_name=$(basename "$vm_dir")
-      if [ -f "$vm_dir/process.pid" ] && kill -0 "$(cat "$vm_dir/process.pid" 2>/dev/null)" 2>/dev/null; then
+      if is_vm_running "$vm_name"; then
         status="On"
       else
         status="Off"

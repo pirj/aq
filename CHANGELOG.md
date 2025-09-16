@@ -5,6 +5,7 @@
 ### Bug Fixes
 
 - Fixed `aq scp` unbound variable error when no options are provided
+- Added clear error message when attempting to start an already running VM
 
 ## 1.3 "Polite" 16-Sep-2025
 
