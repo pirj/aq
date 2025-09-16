@@ -263,13 +263,6 @@ add_ssh_forward() {
   echo "hostfwd_add tcp::${HOST_PORT}-:22" | nc -U $BASE_DIR/$VM_NAME/control.sock
 }
 
-# Remove dynamic SSH port forwarding via QEMU monitor
-remove_ssh_forward() {
-  VM_NAME=$1
-  HOST_PORT=$2
-  echo "hostfwd_remove tcp::${HOST_PORT}" | nc -U $BASE_DIR/$VM_NAME/control.sock
-}
-
 # Get SSH connection details for a VM
 get_vm_ssh_details() {
   VM_NAME=$1
@@ -387,13 +380,8 @@ aq_stop() {
   VM_NAME=$1
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
 
-  # Remove SSH forwarding if it exists
-  SSH_PORT_FILE="$BASE_DIR/$VM_NAME/ssh-port.conf"
-  if [ -f "$SSH_PORT_FILE" ]; then
-    SSH_PORT=$(cat "$SSH_PORT_FILE")
-    remove_ssh_forward "$VM_NAME" "$SSH_PORT" 2>/dev/null
-    rm -f "$SSH_PORT_FILE"
-  fi
+  # Clean up SSH port allocation file
+  rm -f "$BASE_DIR/$VM_NAME/ssh-port.conf"
 
   echo quit | nc -U $BASE_DIR/$VM_NAME/control.sock 1>/dev/null
   stderr "Stopped" $VM_NAME
