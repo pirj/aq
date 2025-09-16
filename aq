@@ -313,6 +313,8 @@ first_boot_setup() {
   (
     cd $BASE_DIR/$VM_NAME
     cat <<FIRST | socat STDIO UNIX:command.sock
+hostname $VM_NAME
+echo $VM_NAME > /etc/hostname
 apk add partx sfdisk e2fsprogs-extra
 echo ",+" | sfdisk --no-reread -N 3 /dev/vda --force
 partx --update --nr 3 /dev/vda

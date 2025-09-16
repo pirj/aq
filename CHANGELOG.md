@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Improvements
+
+- Set VM hostname to the VM name on first boot
+
 ### Bug Fixes
 
 - Fixed `aq scp` unbound variable error when no options are provided
