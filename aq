@@ -51,7 +51,16 @@ download_alpine_iso() {
   mkdir -p $BASE_DIR
   (
     cd $BASE_DIR
-    [ -f $LATEST_ALPINE_ISO ] || wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO
+    if [ ! -f $LATEST_ALPINE_ISO ]; then
+      wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO
+      wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO.asc
+      wget -qO- https://alpinelinux.org/keys/ncopa.asc | gpg --import
+      if ! gpg --verify $LATEST_ALPINE_ISO_ASC $LATEST_ALPINE_ISO; then
+        echo "ERROR: Downloaded Apline ISO GPG signature verification failed!"
+        rm -f $LATEST_ALPINE_ISO $LATEST_ALPINE_ISO_ASC
+        exit 1
+      fi
+    fi
   )
 }
 

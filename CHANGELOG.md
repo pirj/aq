@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Security
+
+- Added GPG signature verification for Alpine Linux ISO downloads to ensure integrity
+
 ## 1.4 "Repellent" 16-Sep-2025
 
 ### Improvements
