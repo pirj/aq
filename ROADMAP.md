@@ -72,7 +72,6 @@
 
 - [ ] fwd options: tcp/udp, hostaddr, guestaddr
 
-- [?] multiple machines and MACs
 - [?] adjust SMP - currently uses the default. is this fine for most cases?
 
 ### Use cloud images

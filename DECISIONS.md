@@ -66,3 +66,15 @@ Rationale:
 - Race condition avoidance: Scripts using `aq start` followed by `aq exec` or `aq console` no longer fail due to the VM not being fully booted
 - Automation-friendly: No custom wait loops needed for scripting
 - Consistency: Provides predictable behavior regardless of VM state or system load
+
+## Networking: User-Mode with Host-Mediated Communication
+
+Decision: Use QEMU's user-mode networking (`-nic user`) with port forwarding for VM connectivity.
+
+Rationale: ease of use and reliability for development workflows over direct VM-to-VM networking.
+
+Architecture:
+- Each VM operates in an isolated network namespace with NAT-like connectivity
+- VMs receive the same private IP address (10.0.2.15/24) with host gateway at 10.0.2.2
+- VMs have the same default MAC address (`52:54:00:12:34:56`) in user-mode networking
+- Inter-VM connectivity happens via the host (10.0.2.2) via ports forwarded to the host
