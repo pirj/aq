@@ -30,7 +30,7 @@ HELP
 }
 
 aq_version() {
-  stderr aq $VERSION \"Repellent\" - QEMU wrapper to run Alpine Linux VMs on MacOS
+  stderr aq $VERSION \"Batch\" - QEMU wrapper to run Alpine Linux VMs on MacOS
 }
 
 random_vm_name() {
@@ -38,7 +38,7 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
-VERSION=1.4
+VERSION=1.5
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.1

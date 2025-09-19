@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.5 "Batch" 19-Sep-2025
+
 ### Bug Fixes
 
 - Fixed `aq scp` "stat local" error by using batch mode (-B) as default option
