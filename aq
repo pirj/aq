@@ -431,7 +431,7 @@ aq_exec() {
 aq_scp() {
   [ $# -lt 2 ] && stderr 'Error: At least source and destination required. Usage: `aq scp [-r] [-p] source... destination`.' && exit 1
 
-  local scp_opts=("")
+  local scp_opts=("-B")
   local sources=()
   local destination=""
   local vm_name=""

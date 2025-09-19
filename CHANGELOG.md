@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Bug Fixes
+
+- Fixed `aq scp` "stat local" error by using batch mode (-B) as default option
+
 ### Security
 
 - Added GPG signature verification for Alpine Linux ISO downloads to ensure integrity
