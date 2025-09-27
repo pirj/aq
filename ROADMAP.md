@@ -33,7 +33,7 @@
 
 - [-] add --nowait option to "aq start" to skip waiting for system boot IRRELEVANT: Use background jobs (&) and the wait command instead
 
-- [ ] add a special interim status "Booting" to aq_ls
+- [-] add a special interim status "Booting" to aq_ls - meh, doesn't make sense to add a feature just for the sake of adding it
 
 - [ ] reduce boot time, 12s now, target: 2s
   - [ ] by 3s by skipping the user input wait for boot option. Should be something like `timeout` in /etc/
