@@ -31,8 +31,9 @@
 
 - [ ] remove excessive output around aq console/exec; also the rest like first boot etc
 
-- [ ] add --nowait option to "aq start" to skip waiting for system boot
-      add a special interim status "Booting" to aq_ls
+- [-] add --nowait option to "aq start" to skip waiting for system boot IRRELEVANT: Use background jobs (&) and the wait command instead
+
+- [ ] add a special interim status "Booting" to aq_ls
 
 - [ ] install those to the base image instead of in each vm! apk add partx sfdisk e2fsprogs-extra
 

@@ -67,6 +67,15 @@ Rationale:
 - Automation-friendly: No custom wait loops needed for scripting
 - Consistency: Provides predictable behavior regardless of VM state or system load
 
+For concurrency, leverage shell background jobs and the `wait` command:
+
+```bash
+aq start vm1 &
+aq start vm2 &
+wait
+# Waits for all VMs to be ready
+```
+
 ## Networking: User-Mode with Host-Mediated Communication
 
 Decision: Use QEMU's user-mode networking (`-nic user`) with port forwarding for VM connectivity.
