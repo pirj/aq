@@ -35,7 +35,13 @@
 
 - [ ] add a special interim status "Booting" to aq_ls
 
+- [ ] reduce boot time, 12s now, target: 2s
+  - [ ] by 3s by skipping the user input wait for boot option. Should be something like `timeout` in /etc/
+  - [ ] or boot directly, without the bootloader? see https://wiki.alpinelinux.org/wiki/Bootloaders#EFI_Boot_Stub https://wiki.gentoo.org/wiki/Efibootmgr https://wiki.archlinux.org/title/EFI_boot_stub
+
 - [ ] install those to the base image instead of in each vm! apk add partx sfdisk e2fsprogs-extra
+
+- [ ] check what happens to nc -U / tio when uncommenting getty for serial in /etc/inittab. Is it ttyS0 or ttyAMA0 ?
 
 - [ ] stability improvements. sometimes fails on bootstrap
         alpine:~# > DISKOPTS="-m sys /dev/vda"
