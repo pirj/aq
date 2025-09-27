@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Bug Fixes
+
+- Fixed "unbound variable" error when running commands without required VM name argument
+
 ## 1.5 "Batch" 19-Sep-2025
 
 ### Bug Fixes
