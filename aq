@@ -38,7 +38,7 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
-VERSION=1.5.2
+VERSION=1.6.0
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -333,7 +333,9 @@ apk add partx sfdisk e2fsprogs-extra
 echo ",+" | sfdisk --no-reread -N 3 /dev/vda --force
 partx --update --nr 3 /dev/vda
 resize2fs /dev/vda3
+echo "FIRST_BOOT_SETUP_COMPLETE"
 FIRST
+    wait_for 'expect("FIRST_BOOT_SETUP_COMPLETE")'
   )
 }
 

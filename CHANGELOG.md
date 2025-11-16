@@ -2,9 +2,12 @@
 
 ## Unreleased
 
+## 1.6.0 "The Tortoise" 16-Nov-2025
+
 ### Bug Fixes
 
 - Fixed race condition where `aq exec` and `aq console` could run before first boot setup completed, causing APK database lock errors
+- Fixed `first_boot_setup` not waiting for commands to complete before returning, ensuring APK operations finish before provisioning scripts run
 
 ## 1.5.2 16-Nov-2025
 
