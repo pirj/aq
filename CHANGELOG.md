@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.5.1 16-Nov-2025
+
+### Improvements
+
+- Updated Alpine Linux version from 3.22.1 to 3.22.2
+
 ### Bug Fixes
 
 - Fixed "unbound variable" error when running commands without required VM name argument

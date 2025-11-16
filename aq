@@ -38,10 +38,10 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
-VERSION=1.5
+VERSION=1.5.1
 
 BASE_DIR=~/.local/share/aq
-LATEST_ALPINE_VERSION=3.22.1
+LATEST_ALPINE_VERSION=3.22.2
 LATEST_ALPINE_MAJOR_MINOR=3.22
 LATEST_ALPINE_ISO=alpine-virt-$LATEST_ALPINE_VERSION-aarch64.iso
 
