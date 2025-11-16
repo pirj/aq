@@ -404,10 +404,33 @@ aq_stop() {
   fi
 }
 
+# Wait for first boot setup to complete before allowing exec/console
+wait_for_first_boot() {
+  VM_NAME=$1
+  FIRST_BOOT_MARKER="$BASE_DIR/$VM_NAME/.needs_first_boot_setup"
+
+  if [ -f "$FIRST_BOOT_MARKER" ]; then
+    stderr "Waiting for first boot setup to complete..."
+    ATTEMPTS=0
+    MAX_ATTEMPTS=60  # 60 * 0.5s = 30 seconds
+    while [ -f "$FIRST_BOOT_MARKER" ] && [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+      sleep 0.5
+      stderr -n "."
+      ATTEMPTS=$((ATTEMPTS + 1))
+    done
+    stderr ""
+
+    if [ -f "$FIRST_BOOT_MARKER" ]; then
+      stderr "Warning: First boot setup timeout after 30 seconds, proceeding anyway..."
+    fi
+  fi
+}
+
 aq_console() {
   VM_NAME=${1:-}
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
   ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
+  wait_for_first_boot "$VM_NAME"
 
   vm_ssh "$VM_NAME"
 }
@@ -416,6 +439,7 @@ aq_exec() {
   VM_NAME=${1:-}
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name>`.' && exit 1
   ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
+  wait_for_first_boot "$VM_NAME"
   shift
 
   if [ -t 0 ] && [ $# -gt 0 ]; then # No stdin, have command-line arguments - execute them as a command

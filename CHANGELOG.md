@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Bug Fixes
+
+- Fixed race condition where `aq exec` and `aq console` could run before first boot setup completed, causing APK database lock errors
+
 ## 1.5.2 16-Nov-2025
 
 ### Bug Fixes
