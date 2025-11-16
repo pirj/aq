@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.5.2 16-Nov-2025
+
+### Bug Fixes
+
+- Fixed "LATEST_ALPINE_ISO_ASC: unbound variable" error in GPG signature verification
+
 ## 1.5.1 16-Nov-2025
 
 ### Improvements

@@ -38,7 +38,7 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
-VERSION=1.5.1
+VERSION=1.5.2
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -55,9 +55,9 @@ download_alpine_iso() {
       wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO
       wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO.asc
       wget -qO- https://alpinelinux.org/keys/ncopa.asc | gpg --import
-      if ! gpg --verify $LATEST_ALPINE_ISO_ASC $LATEST_ALPINE_ISO; then
+      if ! gpg --verify $LATEST_ALPINE_ISO.asc $LATEST_ALPINE_ISO; then
         echo "ERROR: Downloaded Apline ISO GPG signature verification failed!"
-        rm -f $LATEST_ALPINE_ISO $LATEST_ALPINE_ISO_ASC
+        rm -f $LATEST_ALPINE_ISO $LATEST_ALPINE_ISO.asc
         exit 1
       fi
     fi
