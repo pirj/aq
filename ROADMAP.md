@@ -66,6 +66,8 @@
 - [ ] snapshots (see details below)
 - [ ] can be used as a backend for containers.dev? https://github.com/microsoft/vscode-remote-try-rust/blob/main/.devcontainer/devcontainer.json
 - [ ] benchmarks/feature rundown vs Docker/Macpine/OrbStack/Podman/Virsh
+  - [ ] https://github.com/panubo/docker-sshd Directly compare size, performance, isolation, configurability, reproducibility, horizontal scalability (more same machines), sharing data, startup time. Features: snapshots, overlays. Docker is an app container. aq is a system container
+
 - [ ] bash completions
 
 - [ ] add a doc section on troubleshooting: e.g.
@@ -85,6 +87,7 @@
 
 Mention https://github.com/alpinelinux/alpine-make-vm-image - build images
 https://gitlab.alpinelinux.org/alpine/cloud/alpine-cloud-images - build cloud images
+ Pre-made arch qcow2 images https://gitlab.archlinux.org/archlinux/arch-boxes - more like tools to make images?
 
 Consider https://alpinelinux.org/cloud/ again. how hard is it to build that IMDS metadata server that publishes the root pubkey to allow ssh?
 https://gitlab.alpinelinux.org/alpine/cloud/tiny-cloud - tiny bootstrapper
