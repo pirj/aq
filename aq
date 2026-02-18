@@ -364,7 +364,7 @@ aq_start() {
     -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$VM_NAME/control.sock,server=on,wait=off \
     -daemonize -pidfile $BASE_DIR/$VM_NAME/process.pid \
     -name $VM_NAME \
-    -nographic \
+    -display none \
     -parallel none \
     -monitor none
 
