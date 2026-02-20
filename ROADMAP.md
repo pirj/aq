@@ -31,6 +31,8 @@
 
 - [ ] remove excessive output around aq console/exec; also the rest like first boot etc
 
+- [ ] replace /etc/motd that suggests to set up the system
+
 - [-] add --nowait option to "aq start" to skip waiting for system boot IRRELEVANT: Use background jobs (&) and the wait command instead
 
 - [-] add a special interim status "Booting" to aq_ls - meh, doesn't make sense to add a feature just for the sake of adding it
