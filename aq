@@ -444,9 +444,9 @@ aq_exec() {
   wait_for_first_boot "$VM_NAME"
   shift
 
-  if [ -t 0 ] && [ $# -gt 0 ]; then # No stdin, have command-line arguments - execute them as a command
+  if [ $# -gt 0 ]; then # Have command-line arguments - execute them as a command
     vm_ssh "$VM_NAME" "$@"
-  elif [ ! -t 0 ]; then # Have stdin - execute it as a script
+  elif [ ! -t 0 ]; then # No arguments, have stdin - execute it as a script
     vm_ssh "$VM_NAME" 'sh -s'
   else
     stderr 'Error: No command or stdin provided. Usage: `aq exec <vm-name> [command]` or pipe input.'
