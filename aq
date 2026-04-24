@@ -589,13 +589,13 @@ aq_ls() {
 
 [ $# -gt 0 ] && { COMMAND=$1; shift; } || COMMAND=""
 case $COMMAND in
-  new) aq_new $* ;;
-  start) aq_start $* ;;
-  stop) aq_stop $* ;;
-  console) aq_console $* ;;
-  exec) aq_exec $* ;;
-  scp) aq_scp $* ;;
-  rm) aq_rm $* ;;
+  new) aq_new "$@" ;;
+  start) aq_start "$@" ;;
+  stop) aq_stop "$@" ;;
+  console) aq_console "$@" ;;
+  exec) aq_exec "$@" ;;
+  scp) aq_scp "$@" ;;
+  rm) aq_rm "$@" ;;
   ls) aq_ls ;;
   "--version") aq_version ;;
   "" | "help" | "-h" | "--help") aq_help ;;
