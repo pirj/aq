@@ -37,7 +37,7 @@ jobs:
 
       - name: Build tio from source (Ubuntu's tio is too old for --script)
         run: |
-          git clone --depth 1 --branch v3.10 https://github.com/tio/tio.git /tmp/tio
+          git clone --depth 1 --branch v3.9 https://github.com/tio/tio.git /tmp/tio
           cd /tmp/tio
           meson setup build
           meson compile -C build
