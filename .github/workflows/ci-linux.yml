@@ -33,7 +33,7 @@ jobs:
             ovmf \
             wget gpg \
             coreutils \
-            meson ninja-build pkg-config liblua5.4-dev libinih-dev
+            meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev
 
       - name: Build tio from source (Ubuntu's tio is too old for --script)
         run: |
