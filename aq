@@ -329,9 +329,12 @@ BOOTSTRAP
     # Install mkfs.ext4 (can be done without the network)
     echo "apk add e2fsprogs" | socat STDIO UNIX:command.sock
 
-    echo "echo y | ROOTFS=ext4 setup-alpine -e -f setup.conf" | socat STDIO UNIX:command.sock
+    # Chain a sentinel after setup-alpine so we know setup-alpine has fully
+    # returned control to the shell before we send follow-up commands.
+    # Otherwise setup-alpine's tail output can interleave with ours.
+    echo "echo y | ROOTFS=ext4 setup-alpine -e -f setup.conf; echo SETUP_ALPINE_DONE" | socat STDIO UNIX:command.sock
 
-    wait_for 'expect("Installation is complete. Please reboot.")'
+    wait_for 'expect("SETUP_ALPINE_DONE")'
 
     # Determine the serial tty inside the guest (ttyS0 on x86_64, ttyAMA0 on aarch64).
     case "$ARCH" in
