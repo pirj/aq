@@ -27,13 +27,14 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 qemu-utils \
             socat \
             ovmf \
-            wget gpg \
+            wget gpg ca-certificates \
             coreutils \
-            meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev
+            meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev \
+            git build-essential
 
       - name: Build tio from source (Ubuntu's tio is too old for --script)
         run: |
