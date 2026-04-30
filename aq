@@ -280,8 +280,12 @@ bootstrap_base_image() {
 
     echo Bootstrapping:
 
-    cat <<BOOTSTRAP | socat STDIO UNIX:command.sock
-cat <<SETUP-CONF > setup.conf
+    # Build setup.conf locally on the host. This avoids sending a multi-line
+    # heredoc into the live ISO's tty — busybox ash heredoc termination over
+    # serial proved fragile (the SETUP-CONF terminator was not consistently
+    # recognised on x86_64, leaving the shell stuck in a continuation prompt).
+    SSH_PUB=$(ls $HOME/.ssh | grep '\.pub$' | head -1 | xargs -I_ cat $HOME/.ssh/_)
+    SETUP_CONF=$(cat <<SETUP_CONF_END
 KEYMAPOPTS=none
 
 # Set hostname to 'alpine'
@@ -313,7 +317,7 @@ APKREPOSOPTS="-1"
 
 # Create admin user
 USEROPTS="-g floppy nouser"
-ROOTSSHKEY="$(ls $HOME/.ssh | grep '\.pub$' | head -1 | xargs -I_ cat $HOME/.ssh/_)"
+ROOTSSHKEY="$SSH_PUB"
 
 # Install Openssh
 SSHDOPTS=openssh
@@ -323,40 +327,31 @@ NTPOPTS="busybox"
 
 # Use /dev/vda as a sys disk
 DISKOPTS="-m sys /dev/vda"
-SETUP-CONF
-BOOTSTRAP
+SETUP_CONF_END
+)
+    SETUP_CONF_B64=$(printf '%s\n' "$SETUP_CONF" | base64 | tr -d '\n')
 
-    # Install mkfs.ext4 (can be done without the network)
+    # Send each command as a single line. Encode the heredoc via base64 so the
+    # bytes on the serial wire are a single long line that busybox ash can
+    # parse without state ambiguity.
+    echo "echo $SETUP_CONF_B64 | base64 -d > /root/setup.conf" | socat STDIO UNIX:command.sock
+
+    # Install mkfs.ext4 (offline-installable from the live ISO).
     echo "apk add e2fsprogs" | socat STDIO UNIX:command.sock
 
-    # Chain a sentinel after setup-alpine so we know setup-alpine has fully
-    # returned control to the shell before we send follow-up commands.
-    # Otherwise setup-alpine's tail output can interleave with ours.
-    echo "echo y | ROOTFS=ext4 setup-alpine -e -f setup.conf; echo SETUP_ALPINE_DONE" | socat STDIO UNIX:command.sock
+    # Run setup-alpine non-interactively, then emit a sentinel using uname -m
+    # substitution. The sentinel string only appears in OUTPUT (after substitution)
+    # so wait_for can't false-match the typed input echoed back.
+    echo "echo y | ROOTFS=ext4 setup-alpine -e -f /root/setup.conf; printf 'SETUP_ALPINE_%s_OK\n' \"\$(uname -m)\"" | socat STDIO UNIX:command.sock
 
-    wait_for 'expect("SETUP_ALPINE_DONE")'
+    wait_for "expect(\"SETUP_ALPINE_${ARCH}_OK\")"
 
-    # Determine the serial tty inside the guest (ttyS0 on x86_64, ttyAMA0 on aarch64).
-    case "$ARCH" in
-      x86_64)  GUEST_SERIAL_TTY=ttyS0 ;;
-      aarch64) GUEST_SERIAL_TTY=ttyAMA0 ;;
-      *) echo "Error: unknown ARCH $ARCH for serial tty mapping" >&2; exit 1 ;;
-    esac
+    # Best-effort: clean up /root/setup.conf from the installed rootfs.
+    # No serial-getty / grub-console hacks here — aq_start now uses SSH for
+    # runtime, so the installed VM doesn't need a serial login prompt.
+    echo "mkdir -p /target; mount /dev/vda3 /target; rm -f /target/root/setup.conf; umount /target; printf 'CLEANUP_%s_OK\n' \"\$(uname -m)\"" | socat STDIO UNIX:command.sock
 
-    # Run post-install steps in the live ISO.
-    # Notes:
-    # - sh -c wraps the whole script as one statement (less terminal-echo interleaving).
-    # - Sentinel uses $(uname -m) substitution so the matched string only
-    #   appears in the SHELL OUTPUT (not in the typed-input echo). Otherwise
-    #   tio's `expect` would match the input being echoed back and proceed
-    #   before sh -c actually runs.
-    # - Always echo the sentinel after sh -c (even on failure) by using a
-    #   command list outside sh -c, so the host doesn't hang on errors.
-    cat <<SH | socat STDIO UNIX:command.sock
-sh -c 'umount -l /mnt 2>/dev/null; umount -l /target 2>/dev/null; mkdir -p /target; mount /dev/vda3 /target && echo MOUNT_OK || echo MOUNT_FAIL; rm -f /target/root/setup.conf; if ! grep -q "$GUEST_SERIAL_TTY" /target/etc/inittab; then echo "$GUEST_SERIAL_TTY::respawn:/sbin/getty -L 115200 $GUEST_SERIAL_TTY vt100" >> /target/etc/inittab; fi; if [ -f /target/boot/grub/grub.cfg ] && ! grep -q "console=$GUEST_SERIAL_TTY" /target/boot/grub/grub.cfg; then sed -i "/^[[:space:]]*linux[[:space:]]/ s|\$| console=$GUEST_SERIAL_TTY,115200|" /target/boot/grub/grub.cfg; fi; umount /target' ; printf "POSTHOOKS_%s_OK\n" "\$(uname -m)"
-SH
-
-    wait_for "expect(\"POSTHOOKS_${ARCH}_OK\")"
+    wait_for "expect(\"CLEANUP_${ARCH}_OK\")"
 
     echo poweroff | socat STDIO UNIX:command.sock
 
