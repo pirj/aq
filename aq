@@ -65,6 +65,40 @@ detect_host() {
   esac
 }
 
+migrate_base_dir_to_arch() {
+  # One-time migration: ~/.local/share/aq/{alpine-base*.raw,alpine-virt*.iso,uefi-vars.json}
+  # → ~/.local/share/aq/<arch>/...
+  # Note: aq runs with `set -f` (no globbing), so we use `set +f` locally.
+  [ ! -d "$BASE_DIR" ] && return 0
+  local arch_dir="$BASE_DIR/$ARCH"
+
+  local moved=0
+  local removed=0
+  set +f
+  for f in "$BASE_DIR"/alpine-base-*.raw \
+           "$BASE_DIR"/alpine-virt-*.iso \
+           "$BASE_DIR"/alpine-virt-*.iso.asc \
+           "$BASE_DIR"/uefi-vars.json; do
+    [ -e "$f" ] || continue
+    [ -d "$f" ] && continue
+    local basename=$(basename "$f")
+    if [ -e "$arch_dir/$basename" ]; then
+      # Newer per-arch copy already exists; the old top-level file is an orphan.
+      rm -f "$f"
+      removed=1
+    else
+      mkdir -p "$arch_dir"
+      mv "$f" "$arch_dir/"
+      moved=1
+    fi
+  done
+  set -f
+
+  [ "$moved" = 1 ] && echo "aq: migrated base assets to $arch_dir" >&2
+  [ "$removed" = 1 ] && echo "aq: removed orphaned base assets from $BASE_DIR (already present in $arch_dir)" >&2
+  return 0
+}
+
 detect_host
 
 VERSION=1.6.0
@@ -72,17 +106,19 @@ VERSION=1.6.0
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
 LATEST_ALPINE_MAJOR_MINOR=3.22
-LATEST_ALPINE_ISO=alpine-virt-$LATEST_ALPINE_VERSION-aarch64.iso
+LATEST_ALPINE_ISO=alpine-virt-$LATEST_ALPINE_VERSION-$ARCH.iso
 
-LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-aarch64.raw
+LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-$ARCH.raw
+
+migrate_base_dir_to_arch
 
 download_alpine_iso() {
-  mkdir -p $BASE_DIR
+  mkdir -p $BASE_DIR/$ARCH
   (
-    cd $BASE_DIR
+    cd $BASE_DIR/$ARCH
     if [ ! -f $LATEST_ALPINE_ISO ]; then
-      wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO
-      wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/aarch64/$LATEST_ALPINE_ISO.asc
+      wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/$ARCH/$LATEST_ALPINE_ISO
+      wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/$ARCH/$LATEST_ALPINE_ISO.asc
       wget -qO- https://alpinelinux.org/keys/ncopa.asc | gpg --import
       if ! gpg --verify $LATEST_ALPINE_ISO.asc $LATEST_ALPINE_ISO; then
         echo "ERROR: Downloaded Apline ISO GPG signature verification failed!"
@@ -110,13 +146,14 @@ wait_for() {
 }
 
 ensure_base_image() {
-  [ -f $BASE_DIR/$LATEST_ALPINE_BASE ] || bootstrap_base_image
+  [ -f $BASE_DIR/$ARCH/$LATEST_ALPINE_BASE ] || bootstrap_base_image
 }
 
 bootstrap_base_image() {
   download_alpine_iso
   (
-    cd $BASE_DIR
+    mkdir -p $BASE_DIR/$ARCH
+    cd $BASE_DIR/$ARCH
 
     # Start from scratch
     rm -f wip-$LATEST_ALPINE_BASE
@@ -127,14 +164,14 @@ bootstrap_base_image() {
     qemu-system-aarch64 \
       -machine virt,highmem=on -accel hvf -cpu host -m 1G \
       -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
-      -device uefi-vars-sysbus,jsonfile=$BASE_DIR/uefi-vars.json \
-      -drive if=virtio,file=$BASE_DIR/wip-$LATEST_ALPINE_BASE,format=raw,cache=none \
-      -boot order=cd -cdrom $BASE_DIR/$LATEST_ALPINE_ISO \
+      -device uefi-vars-sysbus,jsonfile=$BASE_DIR/$ARCH/uefi-vars.json \
+      -drive if=virtio,file=$BASE_DIR/$ARCH/wip-$LATEST_ALPINE_BASE,format=raw,cache=none \
+      -boot order=cd -cdrom $BASE_DIR/$ARCH/$LATEST_ALPINE_ISO \
       -nic user,model=virtio-net-pci \
       -rtc base=utc,clock=host \
-      -serial unix:$BASE_DIR/command.sock,server=on,wait=off,nodelay=on \
-      -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/control.sock,server=on,wait=off \
-      -daemonize -pidfile $BASE_DIR/process.pid \
+      -serial unix:$BASE_DIR/$ARCH/command.sock,server=on,wait=off,nodelay=on \
+      -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$ARCH/control.sock,server=on,wait=off \
+      -daemonize -pidfile $BASE_DIR/$ARCH/process.pid \
       -name wip-base-$LATEST_ALPINE_VERSION \
       -nographic \
       -parallel none \
@@ -222,8 +259,8 @@ SH
 
     # OS installed, vars written. Time to set in stone.
     chmod -w uefi-vars.json
-    mv $BASE_DIR/{wip-,}$LATEST_ALPINE_BASE
-    chmod -w $BASE_DIR/$LATEST_ALPINE_BASE
+    mv $BASE_DIR/$ARCH/{wip-,}$LATEST_ALPINE_BASE
+    chmod -w $BASE_DIR/$ARCH/$LATEST_ALPINE_BASE
   )
 }
 
@@ -256,9 +293,9 @@ aq_new() {
         echo $forward >> hostfwd.conf
       done
     fi
-    qemu-img create -b $BASE_DIR/$LATEST_ALPINE_BASE -F raw -f qcow2 storage.qcow2 2G 1>/dev/null
+    qemu-img create -b $BASE_DIR/$ARCH/$LATEST_ALPINE_BASE -F raw -f qcow2 storage.qcow2 2G 1>/dev/null
 
-    cp ../uefi-vars.json .
+    cp $BASE_DIR/$ARCH/uefi-vars.json .
     chmod +w uefi-vars.json
 
     touch .needs_first_boot_setup
@@ -597,6 +634,10 @@ aq_ls() {
     cd "$BASE_DIR"
     for vm_dir in $(ls); do
       [ ! -d "$vm_dir" ] && continue
+      # Skip per-arch metadata directories (aarch64, x86_64)
+      case "$vm_dir" in
+        aarch64|x86_64) continue ;;
+      esac
       vm_name=$(basename "$vm_dir")
       if is_vm_running "$vm_name"; then
         status="On"
