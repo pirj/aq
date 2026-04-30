@@ -446,11 +446,27 @@ get_persistent_ssh_port() {
   fi
 }
 
-# Add dynamic SSH port forwarding via QEMU monitor
+# Add dynamic SSH port forwarding via QEMU monitor.
+# Use socat with -t1 (linger 1s after EOF) so qemu has time to read the
+# command before the connection is closed. Plain `nc -U` can race here.
+# Also retry briefly because the monitor socket may not be ready
+# immediately after qemu's -daemonize returns.
 add_ssh_forward() {
   VM_NAME=$1
   HOST_PORT=$2
-  echo "hostfwd_add tcp::${HOST_PORT}-:22" | nc -U $BASE_DIR/$VM_NAME/control.sock
+  local sock="$BASE_DIR/$VM_NAME/control.sock"
+  local attempt=0
+  while [ $attempt -lt 30 ]; do
+    if [ -S "$sock" ] && \
+       echo "hostfwd_add tcp::${HOST_PORT}-:22" | \
+       socat -t1 - "UNIX-CONNECT:$sock" 2>/dev/null; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.2
+  done
+  stderr "Error: failed to add SSH hostfwd via QEMU monitor after $attempt attempts."
+  return 1
 }
 
 # Get SSH connection details for a VM
@@ -518,22 +534,34 @@ FIRST
 # Poll SSH until the guest accepts a connection (or time out).
 wait_for_ssh() {
   local vm_name=$1
-  local max_attempts=${2:-120}
+  local max_attempts=${2:-90}
   local attempt=0
   local ssh_port
   ssh_port=$(get_vm_ssh_details "$vm_name")
+  stderr "Waiting for SSH on $vm_name (port $ssh_port)..."
   while [ $attempt -lt $max_attempts ]; do
     if ssh -o StrictHostKeyChecking=no \
            -o UserKnownHostsFile=/dev/null \
            -o ConnectTimeout=2 \
            -o LogLevel=ERROR \
            -p "$ssh_port" root@localhost true 2>/dev/null; then
+      stderr "SSH ready on $vm_name after $attempt attempts."
       return 0
     fi
     attempt=$((attempt + 1))
-    sleep 1
+    # Periodic heartbeat every 10 attempts so CI logs show progress.
+    [ $((attempt % 10)) = 0 ] && stderr "  ...still waiting for SSH ($attempt/$max_attempts)"
+    sleep 2
   done
-  stderr "Error: SSH on $vm_name (port $ssh_port) not reachable after ${max_attempts}s"
+  stderr "Error: SSH on $vm_name (port $ssh_port) not reachable after $max_attempts attempts."
+  stderr "Diagnostics:"
+  stderr "  process.pid=$(cat $BASE_DIR/$vm_name/process.pid 2>/dev/null)"
+  stderr "  is_vm_running=$(is_vm_running $vm_name && echo yes || echo no)"
+  stderr "  netstat (host listening on $ssh_port):"
+  netstat -an 2>&1 | grep ":$ssh_port " | head -3 >&2 || true
+  stderr "  ssh -v output:"
+  ssh -vv -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=5 -p "$ssh_port" root@localhost true 2>&1 | head -30 >&2 || true
   return 1
 }
 
