@@ -29,10 +29,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             qemu-system-x86 qemu-utils \
-            tio socat \
+            socat \
             ovmf \
             wget gpg \
-            coreutils
+            coreutils \
+            meson ninja-build pkg-config liblua5.4-dev libinih-dev
+
+      - name: Build tio from source (Ubuntu's tio is too old for --script)
+        run: |
+          git clone --depth 1 --branch v3.10 https://github.com/tio/tio.git /tmp/tio
+          cd /tmp/tio
+          meson setup build
+          meson compile -C build
+          sudo meson install -C build
+          tio --version
 
       - name: Add SSH key for guest provisioning
         run: |
