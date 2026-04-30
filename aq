@@ -65,6 +65,24 @@ detect_host() {
   esac
 }
 
+# Emit qemu CLI fragment for UEFI variable storage, depending on host firmware flavor.
+# Arg: directory containing the per-VM (or shared base) UEFI vars file.
+uefi_vars_args() {
+  local dir=$1
+  case "$UEFI_VARS_FLAVOR" in
+    sysbus_json)
+      echo "-device uefi-vars-sysbus,jsonfile=$dir/uefi-vars.json"
+      ;;
+    pflash_fd)
+      echo "-drive file=$dir/uefi-vars.fd,format=raw,if=pflash,unit=1"
+      ;;
+    *)
+      echo "Error: unknown UEFI_VARS_FLAVOR: $UEFI_VARS_FLAVOR" >&2
+      exit 1
+      ;;
+  esac
+}
+
 migrate_base_dir_to_arch() {
   # One-time migration: ~/.local/share/aq/{alpine-base*.raw,alpine-virt*.iso,uefi-vars.json}
   # → ~/.local/share/aq/<arch>/...
@@ -418,10 +436,10 @@ aq_start() {
 
   HOST_FORWARDS="$(hostfwd $VM_NAME)"
 
-  qemu-system-aarch64 \
-    -machine virt,highmem=on -accel hvf -cpu host -m 1G \
-    -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
-    -device uefi-vars-sysbus,jsonfile=$BASE_DIR/$VM_NAME/uefi-vars.json \
+  $QEMU_BIN \
+    -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m 1G \
+    -drive file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0 \
+    $(uefi_vars_args $BASE_DIR/$VM_NAME) \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
     -boot order=d \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
