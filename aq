@@ -333,9 +333,28 @@ BOOTSTRAP
 
     wait_for 'expect("Installation is complete. Please reboot.")'
 
+    # Determine the serial tty inside the guest (ttyS0 on x86_64, ttyAMA0 on aarch64).
+    case "$ARCH" in
+      x86_64)  GUEST_SERIAL_TTY=ttyS0 ;;
+      aarch64) GUEST_SERIAL_TTY=ttyAMA0 ;;
+      *) echo "Error: unknown ARCH $ARCH for serial tty mapping" >&2; exit 1 ;;
+    esac
+
     cat <<SH  | socat STDIO UNIX:command.sock
 mount /dev/vda3 /mnt
 rm /mnt/root/setup.conf
+# Ensure a serial getty is enabled in the installed Alpine. Alpine's
+# setup-alpine on x86_64 does not always wire up serial getty after
+# install; aq's automation talks to the guest via the serial console
+# during first boot, so the login prompt must appear there.
+if ! grep -q "$GUEST_SERIAL_TTY" /mnt/etc/inittab; then
+  echo "$GUEST_SERIAL_TTY::respawn:/sbin/getty -L 115200 $GUEST_SERIAL_TTY vt100" >> /mnt/etc/inittab
+fi
+# Ensure kernel uses serial as console too. Append "console=<tty>,115200"
+# to every kernel cmdline (lines starting with whitespace + "linux ").
+if [ -f /mnt/boot/grub/grub.cfg ] && ! grep -q "console=$GUEST_SERIAL_TTY" /mnt/boot/grub/grub.cfg; then
+  sed -i "/^[[:space:]]*linux[[:space:]]/ s|\$| console=$GUEST_SERIAL_TTY,115200|" /mnt/boot/grub/grub.cfg
+fi
 umount /mnt
 SH
 
