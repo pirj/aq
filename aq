@@ -343,23 +343,22 @@ BOOTSTRAP
       *) echo "Error: unknown ARCH $ARCH for serial tty mapping" >&2; exit 1 ;;
     esac
 
-    cat <<SH  | socat STDIO UNIX:command.sock
-mount /dev/vda3 /mnt
-rm /mnt/root/setup.conf
-# Ensure a serial getty is enabled in the installed Alpine. Alpine's
-# setup-alpine on x86_64 does not always wire up serial getty after
-# install; aq's automation talks to the guest via the serial console
-# during first boot, so the login prompt must appear there.
-if ! grep -q "$GUEST_SERIAL_TTY" /mnt/etc/inittab; then
-  echo "$GUEST_SERIAL_TTY::respawn:/sbin/getty -L 115200 $GUEST_SERIAL_TTY vt100" >> /mnt/etc/inittab
-fi
-# Ensure kernel uses serial as console too. Append "console=<tty>,115200"
-# to every kernel cmdline (lines starting with whitespace + "linux ").
-if [ -f /mnt/boot/grub/grub.cfg ] && ! grep -q "console=$GUEST_SERIAL_TTY" /mnt/boot/grub/grub.cfg; then
-  sed -i "/^[[:space:]]*linux[[:space:]]/ s|\$| console=$GUEST_SERIAL_TTY,115200|" /mnt/boot/grub/grub.cfg
-fi
-umount /mnt
-echo "POST_INSTALL_HOOKS_DONE"
+    # Use a fresh mountpoint /target. /mnt may still be in use after setup-alpine
+    # on x86_64 (verified via CI logs: silent mount no-op on /mnt). Wrap commands
+    # in `sh -c` to read as one shell statement (less terminal-echo interleaving).
+    cat <<SH | socat STDIO UNIX:command.sock
+sh -c 'set -e; \
+  umount -l /mnt 2>/dev/null || true; \
+  mkdir -p /target && mount /dev/vda3 /target; \
+  rm -f /target/root/setup.conf; \
+  if ! grep -q "$GUEST_SERIAL_TTY" /target/etc/inittab; then \
+    echo "$GUEST_SERIAL_TTY::respawn:/sbin/getty -L 115200 $GUEST_SERIAL_TTY vt100" >> /target/etc/inittab; \
+  fi; \
+  if [ -f /target/boot/grub/grub.cfg ] && ! grep -q "console=$GUEST_SERIAL_TTY" /target/boot/grub/grub.cfg; then \
+    sed -i "/^[[:space:]]*linux[[:space:]]/ s|\$| console=$GUEST_SERIAL_TTY,115200|" /target/boot/grub/grub.cfg; \
+  fi; \
+  umount /target; \
+  echo POST_INSTALL_HOOKS_DONE'
 SH
 
     wait_for 'expect("POST_INSTALL_HOOKS_DONE")'
