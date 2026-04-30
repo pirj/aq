@@ -52,11 +52,24 @@ detect_host() {
     Linux)
       HOST_OS=linux
       ARCH=x86_64
-      ACCEL=kvm
       QEMU_BIN=qemu-system-x86_64
       MACHINE_OPTS="q35"
       UEFI_CODE="/usr/share/OVMF/OVMF_CODE.fd"
       UEFI_VARS_FLAVOR=pflash_fd
+      if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+        ACCEL=kvm
+      elif [ -e /dev/kvm ]; then
+        echo "Error: /dev/kvm exists but is not accessible." >&2
+        echo "Hint: add your user to the 'kvm' group, then log out and back in:" >&2
+        echo "  sudo usermod -aG kvm \$USER" >&2
+        exit 1
+      else
+        echo "Error: /dev/kvm not found. KVM is required for aq on Linux." >&2
+        echo "Hint: ensure your host supports virtualization (Intel VT-x / AMD-V)," >&2
+        echo "      and that the kvm kernel modules are loaded:" >&2
+        echo "  lsmod | grep kvm" >&2
+        exit 1
+      fi
       ;;
     *)
       echo "Error: unsupported host OS: $(uname -s). aq supports macOS (Darwin) and Linux." >&2
