@@ -38,6 +38,37 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
+find_ovmf_code() {
+  # Echo path to OVMF_CODE.fd, trying known locations across distros.
+  local candidates=(
+    /usr/share/OVMF/OVMF_CODE_4M.fd
+    /usr/share/OVMF/OVMF_CODE.fd
+    /usr/share/edk2/ovmf/OVMF_CODE.fd
+    /usr/share/edk2/x64/OVMF_CODE.fd
+    /usr/share/qemu/OVMF.fd
+  )
+  local p
+  for p in "${candidates[@]}"; do
+    [ -f "$p" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+find_ovmf_vars() {
+  # Echo path to OVMF_VARS.fd template (will be copied for read-write use).
+  local candidates=(
+    /usr/share/OVMF/OVMF_VARS_4M.fd
+    /usr/share/OVMF/OVMF_VARS.fd
+    /usr/share/edk2/ovmf/OVMF_VARS.fd
+    /usr/share/edk2/x64/OVMF_VARS.fd
+  )
+  local p
+  for p in "${candidates[@]}"; do
+    [ -f "$p" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
 detect_host() {
   case "$(uname -s)" in
     Darwin)
@@ -54,7 +85,10 @@ detect_host() {
       ARCH=x86_64
       QEMU_BIN=qemu-system-x86_64
       MACHINE_OPTS="q35"
-      UEFI_CODE="/usr/share/OVMF/OVMF_CODE.fd"
+      UEFI_CODE=$(find_ovmf_code) || {
+        echo "Error: OVMF firmware not found. Install package 'ovmf'." >&2
+        exit 1
+      }
       UEFI_VARS_FLAVOR=pflash_fd
       if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
         ACCEL=kvm
@@ -107,8 +141,11 @@ ensure_uefi_vars() {
       ;;
     pflash_fd)
       if [ ! -f "$dir/uefi-vars.fd" ]; then
-        local src=/usr/share/OVMF/OVMF_VARS.fd
-        [ -f "$src" ] || { echo "Error: $src not found. Install package 'ovmf'." >&2; exit 1; }
+        local src
+        src=$(find_ovmf_vars) || {
+          echo "Error: OVMF_VARS.fd not found. Install package 'ovmf'." >&2
+          exit 1
+        }
         cp "$src" "$dir/uefi-vars.fd"
         chmod +w "$dir/uefi-vars.fd"
       fi
