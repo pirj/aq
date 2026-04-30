@@ -1,0 +1,40 @@
+name: CI (Linux)
+
+on:
+  push:
+    branches: [main, phase-1-linux-host-support]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify KVM availability
+        run: |
+          ls -l /dev/kvm
+          [ -r /dev/kvm ] && [ -w /dev/kvm ] || {
+            echo "::error::/dev/kvm is not accessible on this runner"
+            exit 1
+          }
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-x86 qemu-utils \
+            tio socat \
+            ovmf \
+            wget gpg \
+            coreutils
+
+      - name: Add SSH key for guest provisioning
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Run smoke test
+        run: bash tests/run.sh
