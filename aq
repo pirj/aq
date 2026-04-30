@@ -343,25 +343,20 @@ BOOTSTRAP
       *) echo "Error: unknown ARCH $ARCH for serial tty mapping" >&2; exit 1 ;;
     esac
 
-    # Use a fresh mountpoint /target. /mnt may still be in use after setup-alpine
-    # on x86_64 (verified via CI logs: silent mount no-op on /mnt). Wrap commands
-    # in `sh -c` to read as one shell statement (less terminal-echo interleaving).
+    # Run post-install steps in the live ISO.
+    # Notes:
+    # - sh -c wraps the whole script as one statement (less terminal-echo interleaving).
+    # - Sentinel uses $(uname -m) substitution so the matched string only
+    #   appears in the SHELL OUTPUT (not in the typed-input echo). Otherwise
+    #   tio's `expect` would match the input being echoed back and proceed
+    #   before sh -c actually runs.
+    # - Always echo the sentinel after sh -c (even on failure) by using a
+    #   command list outside sh -c, so the host doesn't hang on errors.
     cat <<SH | socat STDIO UNIX:command.sock
-sh -c 'set -e; \
-  umount -l /mnt 2>/dev/null || true; \
-  mkdir -p /target && mount /dev/vda3 /target; \
-  rm -f /target/root/setup.conf; \
-  if ! grep -q "$GUEST_SERIAL_TTY" /target/etc/inittab; then \
-    echo "$GUEST_SERIAL_TTY::respawn:/sbin/getty -L 115200 $GUEST_SERIAL_TTY vt100" >> /target/etc/inittab; \
-  fi; \
-  if [ -f /target/boot/grub/grub.cfg ] && ! grep -q "console=$GUEST_SERIAL_TTY" /target/boot/grub/grub.cfg; then \
-    sed -i "/^[[:space:]]*linux[[:space:]]/ s|\$| console=$GUEST_SERIAL_TTY,115200|" /target/boot/grub/grub.cfg; \
-  fi; \
-  umount /target; \
-  echo POST_INSTALL_HOOKS_DONE'
+sh -c 'umount -l /mnt 2>/dev/null; umount -l /target 2>/dev/null; mkdir -p /target; mount /dev/vda3 /target && echo MOUNT_OK || echo MOUNT_FAIL; rm -f /target/root/setup.conf; if ! grep -q "$GUEST_SERIAL_TTY" /target/etc/inittab; then echo "$GUEST_SERIAL_TTY::respawn:/sbin/getty -L 115200 $GUEST_SERIAL_TTY vt100" >> /target/etc/inittab; fi; if [ -f /target/boot/grub/grub.cfg ] && ! grep -q "console=$GUEST_SERIAL_TTY" /target/boot/grub/grub.cfg; then sed -i "/^[[:space:]]*linux[[:space:]]/ s|\$| console=$GUEST_SERIAL_TTY,115200|" /target/boot/grub/grub.cfg; fi; umount /target' ; printf "POSTHOOKS_%s_OK\n" "\$(uname -m)"
 SH
 
-    wait_for 'expect("POST_INSTALL_HOOKS_DONE")'
+    wait_for "expect(\"POSTHOOKS_${ARCH}_OK\")"
 
     echo poweroff | socat STDIO UNIX:command.sock
 
