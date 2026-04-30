@@ -83,6 +83,26 @@ uefi_vars_args() {
   esac
 }
 
+# Ensure UEFI vars storage exists for the given dir.
+# For pflash_fd, copies a fresh OVMF_VARS.fd template.
+# For sysbus_json, qemu creates the JSON file on first run.
+ensure_uefi_vars() {
+  local dir=$1
+  case "$UEFI_VARS_FLAVOR" in
+    sysbus_json)
+      :
+      ;;
+    pflash_fd)
+      if [ ! -f "$dir/uefi-vars.fd" ]; then
+        local src=/usr/share/OVMF/OVMF_VARS.fd
+        [ -f "$src" ] || { echo "Error: $src not found. Install package 'ovmf'." >&2; exit 1; }
+        cp "$src" "$dir/uefi-vars.fd"
+        chmod +w "$dir/uefi-vars.fd"
+      fi
+      ;;
+  esac
+}
+
 migrate_base_dir_to_arch() {
   # One-time migration: ~/.local/share/aq/{alpine-base*.raw,alpine-virt*.iso,uefi-vars.json}
   # → ~/.local/share/aq/<arch>/...
@@ -175,14 +195,16 @@ bootstrap_base_image() {
 
     # Start from scratch
     rm -f wip-$LATEST_ALPINE_BASE
-    rm -f uefi-vars.json
+    rm -f uefi-vars.json uefi-vars.fd
 
     qemu-img create -f raw wip-$LATEST_ALPINE_BASE 500M 1>/dev/null
 
-    qemu-system-aarch64 \
-      -machine virt,highmem=on -accel hvf -cpu host -m 1G \
-      -drive file=$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd,format=raw,if=pflash,readonly=on,unit=0 \
-      -device uefi-vars-sysbus,jsonfile=$BASE_DIR/$ARCH/uefi-vars.json \
+    ensure_uefi_vars $BASE_DIR/$ARCH
+
+    $QEMU_BIN \
+      -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m 1G \
+      -drive file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0 \
+      $(uefi_vars_args $BASE_DIR/$ARCH) \
       -drive if=virtio,file=$BASE_DIR/$ARCH/wip-$LATEST_ALPINE_BASE,format=raw,cache=none \
       -boot order=cd -cdrom $BASE_DIR/$ARCH/$LATEST_ALPINE_ISO \
       -nic user,model=virtio-net-pci \
@@ -276,7 +298,10 @@ SH
     # FIXME: does it exit immediately? wait for command.sock to disappear?
 
     # OS installed, vars written. Time to set in stone.
-    chmod -w uefi-vars.json
+    case "$UEFI_VARS_FLAVOR" in
+      sysbus_json) chmod -w uefi-vars.json ;;
+      pflash_fd)   chmod -w uefi-vars.fd ;;
+    esac
     mv $BASE_DIR/$ARCH/{wip-,}$LATEST_ALPINE_BASE
     chmod -w $BASE_DIR/$ARCH/$LATEST_ALPINE_BASE
   )
@@ -313,8 +338,16 @@ aq_new() {
     fi
     qemu-img create -b $BASE_DIR/$ARCH/$LATEST_ALPINE_BASE -F raw -f qcow2 storage.qcow2 2G 1>/dev/null
 
-    cp $BASE_DIR/$ARCH/uefi-vars.json .
-    chmod +w uefi-vars.json
+    case "$UEFI_VARS_FLAVOR" in
+      sysbus_json)
+        cp $BASE_DIR/$ARCH/uefi-vars.json .
+        chmod +w uefi-vars.json
+        ;;
+      pflash_fd)
+        cp $BASE_DIR/$ARCH/uefi-vars.fd .
+        chmod +w uefi-vars.fd
+        ;;
+    esac
 
     touch .needs_first_boot_setup
   )
