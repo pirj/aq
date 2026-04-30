@@ -24,8 +24,18 @@ jobs:
             exit 1
           }
 
+      - name: Restore apt cache
+        id: apt-cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: aq-ci-apt-noble-v3
+          restore-keys: aq-ci-apt-noble-
+
       - name: Install dependencies
         run: |
+          # Allow pre-fetched .deb files from the cache to be used
+          sudo chmod -R a+r /var/cache/apt/archives 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             qemu-system-x86 qemu-utils \
@@ -36,14 +46,31 @@ jobs:
             meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev \
             git build-essential
 
+      - name: Persist apt cache for next runs
+        if: always()
+        run: |
+          # Don't autoclean: keep the .deb files
+          sudo chown -R $USER:$USER /var/cache/apt/archives
+          ls /var/cache/apt/archives/*.deb 2>/dev/null | wc -l
+
+      - name: Restore tio binary
+        id: tio-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/tio
+          key: aq-ci-tio-v3.9-noble
+
       - name: Build tio from source (Ubuntu's tio is too old for --script)
+        if: steps.tio-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch v3.9 https://github.com/tio/tio.git /tmp/tio
           cd /tmp/tio
           meson setup build
           meson compile -C build
           sudo meson install -C build
-          tio --version
+
+      - name: Verify tio
+        run: tio --version
 
       - name: Add SSH key for guest provisioning
         run: |
