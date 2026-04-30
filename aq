@@ -356,7 +356,10 @@ if [ -f /mnt/boot/grub/grub.cfg ] && ! grep -q "console=$GUEST_SERIAL_TTY" /mnt/
   sed -i "/^[[:space:]]*linux[[:space:]]/ s|\$| console=$GUEST_SERIAL_TTY,115200|" /mnt/boot/grub/grub.cfg
 fi
 umount /mnt
+echo "POST_INSTALL_HOOKS_DONE"
 SH
+
+    wait_for 'expect("POST_INSTALL_HOOKS_DONE")'
 
     echo poweroff | socat STDIO UNIX:command.sock
 
