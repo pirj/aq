@@ -510,19 +510,36 @@ is_vm_running() {
 
 first_boot_setup() {
   VM_NAME=$1
-  (
-    cd $BASE_DIR/$VM_NAME
-    cat <<FIRST | socat STDIO UNIX:command.sock
+  vm_ssh "$VM_NAME" <<FIRST
 hostname $VM_NAME
 echo $VM_NAME > /etc/hostname
 apk add partx sfdisk e2fsprogs-extra
 echo ",+" | sfdisk --no-reread -N 3 /dev/vda --force
 partx --update --nr 3 /dev/vda
 resize2fs /dev/vda3
-echo "FIRST_BOOT_SETUP_COMPLETE"
 FIRST
-    wait_for 'expect("FIRST_BOOT_SETUP_COMPLETE")'
-  )
+}
+
+# Poll SSH until the guest accepts a connection (or time out).
+wait_for_ssh() {
+  local vm_name=$1
+  local max_attempts=${2:-120}
+  local attempt=0
+  local ssh_port
+  ssh_port=$(get_vm_ssh_details "$vm_name")
+  while [ $attempt -lt $max_attempts ]; do
+    if ssh -o StrictHostKeyChecking=no \
+           -o UserKnownHostsFile=/dev/null \
+           -o ConnectTimeout=2 \
+           -o LogLevel=ERROR \
+           -p "$ssh_port" root@localhost true 2>/dev/null; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  stderr "Error: SSH on $vm_name (port $ssh_port) not reachable after ${max_attempts}s"
+  return 1
 }
 
 aq_start() {
@@ -554,26 +571,20 @@ aq_start() {
     -parallel none \
     -monitor none
 
+  # Set up persistent SSH forwarding before waiting — SSH polling needs it.
+  SSH_PORT=$(get_persistent_ssh_port "$VM_NAME")
+  add_ssh_forward "$VM_NAME" "$SSH_PORT"
+
+  # Wait for SSH to be reachable in the guest.
+  wait_for_ssh "$VM_NAME" || exit 1
+
   # Check if first boot setup is needed
   FIRST_BOOT_MARKER="$BASE_DIR/$VM_NAME/.needs_first_boot_setup"
   if [ -f "$FIRST_BOOT_MARKER" ]; then
     stderr "First boot detected, performing automated setup..."
-    (
-      cd $BASE_DIR/$VM_NAME
-      wait_for 'expect("login: "); write("root\n")'
-    )
     first_boot_setup "$VM_NAME"
     rm "$FIRST_BOOT_MARKER"
-  else
-    (
-      cd $BASE_DIR/$VM_NAME
-      wait_for 'expect("login: ")'
-    )
   fi
-
-  # Set up persistent SSH forwarding
-  SSH_PORT=$(get_persistent_ssh_port "$VM_NAME")
-  add_ssh_forward "$VM_NAME" "$SSH_PORT"
 
   stderr Started $VM_NAME
 }
