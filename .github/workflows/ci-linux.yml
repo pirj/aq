@@ -12,11 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify KVM availability
+      - name: Enable KVM access for runner user
         run: |
           ls -l /dev/kvm
+          # GitHub-hosted runners ship /dev/kvm as crw-rw---- root:kvm.
+          # The runner user is not in the kvm group, so widen permissions.
+          sudo chmod 666 /dev/kvm
+          ls -l /dev/kvm
           [ -r /dev/kvm ] && [ -w /dev/kvm ] || {
-            echo "::error::/dev/kvm is not accessible on this runner"
+            echo "::error::/dev/kvm is still not accessible after chmod"
             exit 1
           }
 
