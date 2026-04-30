@@ -38,6 +38,35 @@ random_vm_name() {
   shuf -n 2 /usr/share/dict/words | tr '\n' '-'| sed 's/-$//'
 }
 
+detect_host() {
+  case "$(uname -s)" in
+    Darwin)
+      HOST_OS=darwin
+      ARCH=aarch64
+      ACCEL=hvf
+      QEMU_BIN=qemu-system-aarch64
+      MACHINE_OPTS="virt,highmem=on"
+      UEFI_CODE="$(brew --prefix qemu 2>/dev/null)/share/qemu/edk2-aarch64-code.fd"
+      UEFI_VARS_FLAVOR=sysbus_json
+      ;;
+    Linux)
+      HOST_OS=linux
+      ARCH=x86_64
+      ACCEL=kvm
+      QEMU_BIN=qemu-system-x86_64
+      MACHINE_OPTS="q35"
+      UEFI_CODE="/usr/share/OVMF/OVMF_CODE.fd"
+      UEFI_VARS_FLAVOR=pflash_fd
+      ;;
+    *)
+      echo "Error: unsupported host OS: $(uname -s). aq supports macOS (Darwin) and Linux." >&2
+      exit 1
+      ;;
+  esac
+}
+
+detect_host
+
 VERSION=1.6.0
 
 BASE_DIR=~/.local/share/aq
