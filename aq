@@ -940,13 +940,36 @@ aq_snapshot_create() {
   stderr "Snapshot created: $tag (parent: $parent)"
 }
 
+aq_snapshot_ls() {
+  local dir
+  dir=$(snapshots_dir)
+  [ -d "$dir" ] || return 0
+
+  printf "%-30s %-20s %-7s %-6s %-20s %s\n" "TAG" "PARENT" "REFS" "SIZE" "CREATED" "SOURCE_VM"
+  set +f
+  for snap_dir in "$dir"/*/; do
+    [ -d "$snap_dir" ] || continue
+    local tag
+    tag=$(basename "$snap_dir")
+    local parent created source_vm refs size
+    parent=$(read_meta "$tag" parent 2>/dev/null || echo "?")
+    created=$(read_meta "$tag" created 2>/dev/null || echo "?")
+    source_vm=$(read_meta "$tag" source_vm 2>/dev/null || echo "?")
+    refs=$(get_refcount "$tag")
+    size=$(du -h "$snap_dir/disk.qcow2" 2>/dev/null | awk '{print $1}')
+    printf "%-30s %-20s %-7s %-6s %-20s %s\n" "$tag" "$parent" "$refs" "${size:-?}" "$created" "$source_vm"
+  done
+  set -f
+}
+
 aq_snapshot() {
   local sub=${1:-}
   shift || true
   case "$sub" in
     create) aq_snapshot_create "$@" ;;
+    ls)     aq_snapshot_ls "$@" ;;
     *)
-      stderr "Usage: aq snapshot create <vm-name> <tag>"
+      stderr "Usage: aq snapshot {create|ls} ..."
       exit 1
       ;;
   esac
