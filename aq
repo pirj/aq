@@ -962,14 +962,55 @@ aq_snapshot_ls() {
   set -f
 }
 
+aq_snapshot_rm() {
+  local force=0
+  if [ "${1:-}" = "--force" ]; then
+    force=1
+    shift
+  fi
+  local tag=${1:-}
+  [ -z "$tag" ] && stderr 'Error: tag required: `aq snapshot rm [--force] <tag>`.' && exit 1
+  if ! snapshot_exists "$tag"; then
+    stderr "Error: snapshot '$tag' does not exist."
+    exit 1
+  fi
+  local refs
+  refs=$(get_refcount "$tag")
+  if [ "$refs" -gt 0 ] && [ "$force" -eq 0 ]; then
+    stderr "Error: snapshot '$tag' has $refs reference(s). Use --force to remove anyway, or remove dependents first."
+    exit 1
+  fi
+
+  local parent
+  parent=$(read_meta "$tag" parent 2>/dev/null || echo "")
+  if [ -n "$parent" ] && [ "$parent" != "base" ] && [ "$parent" != "unknown" ]; then
+    drop_refcount "$parent"
+  fi
+
+  set +f
+  for link in "$(tags_dir)"/*; do
+    [ -L "$link" ] || continue
+    local target
+    target=$(readlink "$link")
+    if [ "$(basename "$target")" = "$tag" ]; then
+      rm -f "$link"
+    fi
+  done
+  set -f
+
+  rm -rf "$(snapshot_path "$tag")"
+  stderr "Snapshot removed: $tag"
+}
+
 aq_snapshot() {
   local sub=${1:-}
   shift || true
   case "$sub" in
     create) aq_snapshot_create "$@" ;;
     ls)     aq_snapshot_ls "$@" ;;
+    rm)     aq_snapshot_rm "$@" ;;
     *)
-      stderr "Usage: aq snapshot {create|ls} ..."
+      stderr "Usage: aq snapshot {create|ls|rm} ..."
       exit 1
       ;;
   esac
