@@ -631,6 +631,27 @@ qmp_send() {
     | socat -t10 - "UNIX-CONNECT:$sock" 2>/dev/null
 }
 
+# Poll the VM status until it leaves the inmigrate state. After incoming
+# migration applies, qemu transitions to paused (caller should send cont).
+# Args: <sock>. Returns 0 when out of inmigrate, 1 on timeout.
+qmp_wait_migrate_incoming() {
+  local sock=$1
+  local max_attempts=${2:-300}
+  local attempt=0
+  while [ $attempt -lt $max_attempts ]; do
+    local resp
+    resp=$(qmp_hmp "$sock" 'info status' 2>/dev/null)
+    case "$resp" in
+      *'VM status: paused'*)   return 0 ;;
+      *'VM status: running'*)  return 0 ;;
+    esac
+    attempt=$((attempt + 1))
+    sleep 0.2
+  done
+  stderr "Incoming migration did not apply after ${max_attempts} polls."
+  return 1
+}
+
 # Poll query-migrate until the migration is "completed" or "failed".
 # Args: <sock>. Returns 0 on completed, 1 on failed/timeout.
 qmp_wait_migrate() {
@@ -786,6 +807,15 @@ aq_start() {
 
   HOST_FORWARDS="$(hostfwd $VM_NAME)"
 
+  # If a memory snapshot was staged on aq_new --from-snapshot, ask qemu to
+  # restore from it via the file: migration URI. URI has no spaces, so
+  # ordinary shell word-splitting is fine.
+  local incoming_args=""
+  local incoming_file="$BASE_DIR/$VM_NAME/incoming-memory.bin"
+  if [ -f "$incoming_file" ]; then
+    incoming_args="-incoming file:$incoming_file"
+  fi
+
   $QEMU_BIN \
     -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m 1G \
     -drive file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0 \
@@ -801,7 +831,36 @@ aq_start() {
     -name $VM_NAME \
     -display none \
     -parallel none \
-    -monitor none
+    -monitor none \
+    $incoming_args
+
+  # qemu started with -incoming sits in inmigrate/paused state. Wait for the
+  # migration to apply, then resume the CPU and verify the VM is actually
+  # running. Retry cont if needed — sending cont during the final inmigrate
+  # → paused transition can no-op in some qemu versions.
+  if [ -n "$incoming_args" ]; then
+    local qmp_sock="$BASE_DIR/$VM_NAME/qmp.sock"
+    if ! qmp_wait_migrate_incoming "$qmp_sock"; then
+      stderr "Error: incoming migration did not complete; the VM may be in a bad state."
+      exit 1
+    fi
+    local cont_attempt=0
+    while [ $cont_attempt -lt 30 ]; do
+      qmp_hmp "$qmp_sock" 'cont' >/dev/null
+      sleep 0.2
+      local status_resp
+      status_resp=$(qmp_send "$qmp_sock" '{"execute":"query-status"}')
+      case "$status_resp" in
+        *'"running": true'*) break ;;
+      esac
+      cont_attempt=$((cont_attempt + 1))
+    done
+    if [ $cont_attempt -ge 30 ]; then
+      stderr "Error: VM did not transition to running after $cont_attempt cont attempts."
+      exit 1
+    fi
+    rm -f "$incoming_file"
+  fi
 
   # Set up persistent SSH forwarding before waiting — SSH polling needs it.
   SSH_PORT=$(get_persistent_ssh_port "$VM_NAME")
@@ -1046,12 +1105,8 @@ aq_snapshot_create() {
     qmp_hmp "$qmp_sock" 'stop' >/dev/null
 
     stderr "Live snapshot: capturing memory state..."
-    # The URI must be quoted because HMP migrate parses arguments by
-    # whitespace; without quotes "exec:cat > /path" is split into tokens
-    # and migrate complains "extraneous characters at the end of line".
-    # The whole quoted URI is then passed to /bin/sh -c by qemu's exec:
-    # handler, so shell redirection (>) works inside.
-    qmp_hmp "$qmp_sock" "migrate \"exec:cat > '$snap_dir/memory.bin'\"" >/dev/null
+    # Use the file: migration URI: no spaces, no shell escaping, no eval.
+    qmp_hmp "$qmp_sock" "migrate file:$snap_dir/memory.bin" >/dev/null
     if ! qmp_wait_migrate "$qmp_sock"; then
       stderr "Error: live memory capture failed; resuming VM and removing partial snapshot."
       qmp_hmp "$qmp_sock" 'cont' >/dev/null
