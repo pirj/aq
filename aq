@@ -242,7 +242,7 @@ resolve_tag() {
 
 # Atomically write meta.json. Args: <tag> <parent> <source_vm>.
 write_meta() {
-  local tag=$1 parent=$2 source_vm=$3
+  local tag=$1 parent=$2 source_vm=$3 has_memory=${4:-false}
   local dir
   dir=$(snapshot_path "$tag")
   local now
@@ -255,7 +255,7 @@ write_meta() {
   printf '  "created": "%s",\n'     "$now"                   >> "$dir/meta.json.tmp"
   printf '  "last_used": "%s",\n'   "$now"                   >> "$dir/meta.json.tmp"
   printf '  "source_vm": "%s",\n'   "$source_vm"             >> "$dir/meta.json.tmp"
-  printf '  "has_memory": false\n'                           >> "$dir/meta.json.tmp"
+  printf '  "has_memory": %s\n'     "$has_memory"            >> "$dir/meta.json.tmp"
   printf '}\n'                                               >> "$dir/meta.json.tmp"
   mv "$dir/meta.json.tmp" "$dir/meta.json"
 }
@@ -598,9 +598,11 @@ get_persistent_ssh_port() {
 
 # Run an HMP command via the QMP wrapper. Returns when the HMP command
 # completes. The QMP wire format is JSON; we send qmp_capabilities then
-# the wrapped HMP command in a single connection. socat -t300 keeps the
-# socket open long enough for slow operations like `migrate` of a 1 GB
-# memory image (typical cap on aq VMs).
+# the wrapped HMP command in a single connection.
+#
+# NOTE: HMP `migrate <uri>` is asynchronous over QMP — it returns
+# "terminal does not allow synchronous migration, continuing detached".
+# Use qmp_wait_migrate() after migrate to poll for completion.
 qmp_hmp() {
   local sock=$1
   local hmp_cmd=$2
@@ -608,7 +610,38 @@ qmp_hmp() {
   escaped=$(printf '%s' "$hmp_cmd" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
   printf '{"execute":"qmp_capabilities"}\n{"execute":"human-monitor-command","arguments":{"command-line":"%s"}}\n' \
     "$escaped" \
-    | socat -t300 - "UNIX-CONNECT:$sock" 2>/dev/null
+    | socat -t10 - "UNIX-CONNECT:$sock" 2>/dev/null
+}
+
+# Send a raw QMP command and read response. Args: <sock> <json-command>.
+qmp_send() {
+  local sock=$1
+  local cmd=$2
+  printf '{"execute":"qmp_capabilities"}\n%s\n' "$cmd" \
+    | socat -t10 - "UNIX-CONNECT:$sock" 2>/dev/null
+}
+
+# Poll query-migrate until the migration is "completed" or "failed".
+# Args: <sock>. Returns 0 on completed, 1 on failed/timeout.
+qmp_wait_migrate() {
+  local sock=$1
+  local max_attempts=${2:-300}   # 5 minutes worst case for large memory
+  local attempt=0
+  while [ $attempt -lt $max_attempts ]; do
+    local resp
+    resp=$(qmp_send "$sock" '{"execute":"query-migrate"}')
+    case "$resp" in
+      *'"status": "completed"'*) return 0 ;;
+      *'"status": "failed"'*)
+        stderr "QMP migrate failed: $resp"
+        return 1
+        ;;
+    esac
+    attempt=$((attempt + 1))
+    sleep 0.5
+  done
+  stderr "QMP migrate did not complete after ${max_attempts} polls."
+  return 1
 }
 
 # Add dynamic SSH port forwarding via QEMU monitor.
@@ -958,10 +991,6 @@ aq_snapshot_create() {
   [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq snapshot create <vm-name> <tag>`.' && exit 1
   [ -z "$tag" ]     && stderr 'Error: tag required: `aq snapshot create <vm-name> <tag>`.' && exit 1
   ! vm_exists "$vm_name" && stderr "Error: VM '$vm_name' does not exist." && exit 1
-  if is_vm_running "$vm_name"; then
-    stderr "Error: VM '$vm_name' is running. Stop it first: aq stop $vm_name"
-    exit 1
-  fi
   if snapshot_exists "$tag"; then
     stderr "Error: snapshot '$tag' already exists. Pick a new tag or remove the existing one with: aq snapshot rm $tag"
     exit 1
@@ -971,11 +1000,14 @@ aq_snapshot_create() {
   [ -f "$source_disk" ] || { stderr "Error: source disk not found: $source_disk"; exit 1; }
 
   # Determine parent: read the qcow2 backing-file basename.
+  # --force-share lets us read while the VM holds an exclusive lock.
+  # `|| true` so an empty backing chain (parent=base case) doesn't trip set -e
+  # via grep's no-match exit code under pipefail.
   local backing
-  backing=$(qemu-img info --output=json "$source_disk" 2>/dev/null \
+  backing=$( { qemu-img info --force-share --output=json "$source_disk" 2>/dev/null \
             | grep -E '"backing-filename":' \
             | sed -E 's/.*"backing-filename": "([^"]*)".*/\1/' \
-            | head -1)
+            | head -1; } || true )
   local parent="base"
   if [ -n "$backing" ]; then
     case "$backing" in
@@ -993,11 +1025,49 @@ aq_snapshot_create() {
   snap_dir=$(snapshot_path "$tag")
   mkdir -p "$snap_dir"
 
-  cp "$source_disk" "$snap_dir/disk.qcow2"
+  local has_memory=false
+  if is_vm_running "$vm_name"; then
+    # Live snapshot: pause, dump memory, copy disk, resume.
+    local qmp_sock="$BASE_DIR/$vm_name/qmp.sock"
+    [ -S "$qmp_sock" ] || { stderr "Error: QMP socket missing for running VM '$vm_name'. Restart the VM with this version of aq first."; rm -rf "$snap_dir"; exit 1; }
 
-  write_meta "$tag" "$parent" "$vm_name"
+    stderr "Live snapshot: pausing VM..."
+    vm_ssh "$vm_name" 'sync && sync' 2>/dev/null || true
+    qmp_hmp "$qmp_sock" 'stop' >/dev/null
 
-  stderr "Snapshot created: $tag (parent: $parent)"
+    stderr "Live snapshot: capturing memory state..."
+    # The URI must be quoted because HMP migrate parses arguments by
+    # whitespace; without quotes "exec:cat > /path" is split into tokens
+    # and migrate complains "extraneous characters at the end of line".
+    # The whole quoted URI is then passed to /bin/sh -c by qemu's exec:
+    # handler, so shell redirection (>) works inside.
+    qmp_hmp "$qmp_sock" "migrate \"exec:cat > '$snap_dir/memory.bin'\"" >/dev/null
+    if ! qmp_wait_migrate "$qmp_sock"; then
+      stderr "Error: live memory capture failed; resuming VM and removing partial snapshot."
+      qmp_hmp "$qmp_sock" 'cont' >/dev/null
+      rm -rf "$snap_dir"
+      exit 1
+    fi
+
+    stderr "Live snapshot: copying disk..."
+    cp "$source_disk" "$snap_dir/disk.qcow2"
+
+    stderr "Live snapshot: resuming VM..."
+    qmp_hmp "$qmp_sock" 'cont' >/dev/null
+
+    has_memory=true
+  else
+    # Cold snapshot (Phase 2A behaviour).
+    cp "$source_disk" "$snap_dir/disk.qcow2"
+  fi
+
+  write_meta "$tag" "$parent" "$vm_name" "$has_memory"
+
+  if [ "$has_memory" = true ]; then
+    stderr "Snapshot created: $tag (parent: $parent, with memory)"
+  else
+    stderr "Snapshot created: $tag (parent: $parent)"
+  fi
 }
 
 aq_snapshot_ls() {
