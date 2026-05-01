@@ -273,34 +273,40 @@ read_meta() {
   fi
 }
 
-bump_refcount() {
-  local tag=$1
-  local file
-  file=$(snapshot_path "$tag")/refcount
-  local cur=0
-  [ -f "$file" ] && cur=$(cat "$file")
-  printf '%d\n' "$((cur + 1))" > "$file.tmp"
-  mv "$file.tmp" "$file"
-}
-
-drop_refcount() {
-  local tag=$1
-  local file
-  file=$(snapshot_path "$tag")/refcount
-  local cur=0
-  [ -f "$file" ] && cur=$(cat "$file")
-  local next=$((cur - 1))
-  [ $next -lt 0 ] && next=0
-  printf '%d\n' "$next" > "$file.tmp"
-  mv "$file.tmp" "$file"
-}
-
+# Count live dependents of a snapshot by scanning authoritative state:
+#   1) VMs with .from_snapshot marker == <tag>
+#   2) Other snapshots whose meta.json parent == <tag>
+# This is the source of truth — no separate refcount file to drift.
 get_refcount() {
   local tag=$1
-  local file
-  file=$(snapshot_path "$tag")/refcount
-  [ -f "$file" ] || { echo 0; return; }
-  cat "$file"
+  local count=0
+
+  set +f
+  if [ -d "$BASE_DIR" ]; then
+    local vm_dir
+    for vm_dir in "$BASE_DIR"/*/; do
+      [ -d "$vm_dir" ] || continue
+      local marker="$vm_dir/.from_snapshot"
+      [ -f "$marker" ] || continue
+      [ "$(cat "$marker")" = "$tag" ] && count=$((count + 1))
+    done
+  fi
+
+  local snap_root
+  snap_root=$(snapshots_dir)
+  if [ -d "$snap_root" ]; then
+    local snap_dir other_tag parent
+    for snap_dir in "$snap_root"/*/; do
+      [ -d "$snap_dir" ] || continue
+      other_tag=$(basename "$snap_dir")
+      [ "$other_tag" = "$tag" ] && continue
+      parent=$(read_meta "$other_tag" parent 2>/dev/null || echo "")
+      [ "$parent" = "$tag" ] && count=$((count + 1))
+    done
+  fi
+  set -f
+
+  echo "$count"
 }
 
 # --- end snapshot helpers -----------------------------------------------------
@@ -555,7 +561,7 @@ aq_new() {
   if [ -n "$from_snapshot" ]; then
     local resolved
     resolved=$(resolve_tag "$from_snapshot")
-    bump_refcount "$resolved"
+    # Marker tells aq_rm and get_refcount which snapshot this VM derives from.
     echo "$resolved" > "$BASE_DIR/$VM_NAME/.from_snapshot"
   fi
 
@@ -926,15 +932,6 @@ aq_rm() {
   ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
 
   aq_stop $VM_NAME
-
-  # If this VM was derived from a snapshot, drop that snapshot's refcount.
-  local from_marker="$BASE_DIR/$VM_NAME/.from_snapshot"
-  if [ -f "$from_marker" ]; then
-    local snap
-    snap=$(cat "$from_marker")
-    [ -n "$snap" ] && drop_refcount "$snap"
-  fi
-
   rm -rf $BASE_DIR/$VM_NAME
   stderr "Removed" $VM_NAME
 }
@@ -982,13 +979,7 @@ aq_snapshot_create() {
 
   cp "$source_disk" "$snap_dir/disk.qcow2"
 
-  printf '0\n' > "$snap_dir/refcount"
-
   write_meta "$tag" "$parent" "$vm_name"
-
-  if [ "$parent" != "base" ] && [ "$parent" != "unknown" ]; then
-    bump_refcount "$parent"
-  fi
 
   stderr "Snapshot created: $tag (parent: $parent)"
 }
@@ -1032,12 +1023,6 @@ aq_snapshot_rm() {
   if [ "$refs" -gt 0 ] && [ "$force" -eq 0 ]; then
     stderr "Error: snapshot '$tag' has $refs reference(s). Use --force to remove anyway, or remove dependents first."
     exit 1
-  fi
-
-  local parent
-  parent=$(read_meta "$tag" parent 2>/dev/null || echo "")
-  if [ -n "$parent" ] && [ "$parent" != "base" ] && [ "$parent" != "unknown" ]; then
-    drop_refcount "$parent"
   fi
 
   set +f
