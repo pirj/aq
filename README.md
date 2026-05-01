@@ -30,6 +30,24 @@ aq picks the right backend at runtime via `uname`. Snapshots and per-VM state li
     aq ls | grep On
     aq ls | grep guest-1
 
+### Snapshots
+
+    aq new myrails
+    aq start myrails
+    # ... provision (apk add, bundle install, db:setup, ...)
+    aq stop myrails
+    aq snapshot create myrails rails-deps
+    aq snapshot ls
+    aq snapshot tree
+
+    aq new --from-snapshot=rails-deps shard-1
+    aq new --from-snapshot=rails-deps shard-2
+    aq start shard-1
+    aq start shard-2
+    # Both shards start from the same provisioned state — no apk add, no bundle install.
+
+Snapshots are stored under `~/.local/share/aq/snapshots/<arch>/<tag>/` and live in the same architecture as the host. They are *cold* snapshots — disk state only, no live memory. New VMs cold-boot from the snapshot's disk; the kernel boots fresh, but everything you installed is already there.
+
 ### Install
 
 #### macOS

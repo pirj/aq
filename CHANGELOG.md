@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 2.1.0 "Frozen" 2026-05-01
+
+### New Features
+
+- `aq snapshot create/ls/rm/tag/tree` for managing cold snapshots of stopped VMs. Snapshots store disk state under `~/.local/share/aq/snapshots/<arch>/<tag>/` and carry a `meta.json` (parent, source VM, base image, timestamps) and a refcount. Aliases under `tags/<arch>/<name>` are plain symlinks.
+- `aq new --from-snapshot=<tag> [vm-name]` creates a new VM whose disk overlays a snapshot, skipping `first_boot_setup`. Multiple VMs can derive from one snapshot; their thin overlays only store deltas.
+- `aq snapshot tree` visualises the backing chain as a forest rooted at the alpine base image.
+- `aq rm <vm>` decrements the refcount on the snapshot a VM was derived from (if any), so `aq snapshot rm` can detect orphaned snapshots safely.
+
+### Bug Fixes
+
+- `aq stop` now syncs the guest filesystem over SSH before killing qemu, so disk writes from the most recent `aq exec` are durable. This was a long-standing latent issue that became visible when snapshotting (writes from the source VM would be missing in the snapshot).
+
+### Internal
+
+- New helper section in `aq` for snapshot directory layout, `meta.json` read/write, and refcount management. JSON is read with grep/sed (no jq dependency).
+- Backing chains use absolute paths, so snapshots remain valid across host directory moves of the parent VM but not across machines.
+
+### Limitations (Phase 2A)
+
+- Snapshots are cold (disk only). Phase 2B will add live memory state for millisecond restore.
+- `aq snapshot create` requires the source VM to be stopped.
+- `aq snapshot rm` does not yet auto-clean parent snapshots whose refcount reaches 0; that is a deliberate Phase 5 decision.
+
 ## 2.0.0 "Crossing" 2026-05-01
 
 ### New Features
