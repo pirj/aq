@@ -1,8 +1,17 @@
 ## aq
 
-Frustrated with existing tools, and failing to grasp the depth of the underlying problem, built a new tool to fit my needs: `aq`, a QEMU wrapper to **run Alpine Linux virtual machines** on MacOS.
+Frustrated with existing tools, and failing to grasp the depth of the underlying problem, built a new tool to fit my needs: `aq`, a QEMU wrapper to **run Alpine Linux virtual machines** on macOS and Linux.
 
 Features and Anti-features: dedicated persistent storage; Alpine Linux only; most recent Alpine; recent QEMU; text-mode, console and CLI.
+
+### Supported hosts
+
+| Host                      | Acceleration | Guest arch |
+|---------------------------|--------------|------------|
+| macOS (Apple Silicon)     | HVF          | aarch64    |
+| Linux x86_64 (with KVM)   | KVM          | x86_64     |
+
+aq picks the right backend at runtime via `uname`. Snapshots and per-VM state live under `~/.local/share/aq/<arch>/`.
 
 ### Cheat Sheet
 
@@ -23,7 +32,33 @@ Features and Anti-features: dedicated persistent storage; Alpine Linux only; mos
 
 ### Install
 
+#### macOS
+
     brew install pirj/aq/aq
+
+Or, the underlying dependencies and the script directly:
+
+    brew install qemu tio socat
+
+#### Linux (Debian/Ubuntu)
+
+    sudo apt-get install -y --no-install-recommends \
+      qemu-system-x86 qemu-utils socat ovmf wget gpg ca-certificates
+
+    # tio 3.x is required for --script. Ubuntu 24.04 ships an older version;
+    # build from source:
+    sudo apt-get install -y --no-install-recommends \
+      meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev \
+      git build-essential
+    git clone --depth 1 --branch v3.9 https://github.com/tio/tio.git /tmp/tio
+    cd /tmp/tio && meson setup build && meson compile -C build && sudo meson install -C build
+
+    # KVM access:
+    sudo usermod -aG kvm $USER   # log out and back in
+
+Verify KVM is reachable:
+
+    [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo "KVM OK"
 
 ### Usage
 

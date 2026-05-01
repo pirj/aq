@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.0.0 "Crossing" 2026-05-01
+
 ### New Features
 
 - **Linux x86_64 host support** with KVM acceleration. The same `aq` CLI now runs on Ubuntu/Debian (and other Linux distros with `/dev/kvm`) as on macOS, picking qemu+KVM and a x86_64 Alpine guest at runtime via `uname`. macOS Apple Silicon continues using HVF and ARM64 Alpine.
