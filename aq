@@ -886,6 +886,72 @@ aq_rm() {
   stderr "Removed" $VM_NAME
 }
 
+aq_snapshot_create() {
+  local vm_name=${1:-}
+  local tag=${2:-}
+  [ -z "$vm_name" ] && stderr 'Error: VM name required: `aq snapshot create <vm-name> <tag>`.' && exit 1
+  [ -z "$tag" ]     && stderr 'Error: tag required: `aq snapshot create <vm-name> <tag>`.' && exit 1
+  ! vm_exists "$vm_name" && stderr "Error: VM '$vm_name' does not exist." && exit 1
+  if is_vm_running "$vm_name"; then
+    stderr "Error: VM '$vm_name' is running. Stop it first: aq stop $vm_name"
+    exit 1
+  fi
+  if snapshot_exists "$tag"; then
+    stderr "Error: snapshot '$tag' already exists. Pick a new tag or remove the existing one with: aq snapshot rm $tag"
+    exit 1
+  fi
+
+  local source_disk="$BASE_DIR/$vm_name/storage.qcow2"
+  [ -f "$source_disk" ] || { stderr "Error: source disk not found: $source_disk"; exit 1; }
+
+  # Determine parent: read the qcow2 backing-file basename.
+  local backing
+  backing=$(qemu-img info --output=json "$source_disk" 2>/dev/null \
+            | grep -E '"backing-filename":' \
+            | sed -E 's/.*"backing-filename": "([^"]*)".*/\1/' \
+            | head -1)
+  local parent="base"
+  if [ -n "$backing" ]; then
+    case "$backing" in
+      *"$LATEST_ALPINE_BASE") parent="base" ;;
+      *snapshots/*/disk.qcow2)
+        parent=$(echo "$backing" | sed -E 's|.*/snapshots/[^/]+/([^/]+)/disk.qcow2|\1|')
+        ;;
+      *)
+        parent="unknown"
+        ;;
+    esac
+  fi
+
+  local snap_dir
+  snap_dir=$(snapshot_path "$tag")
+  mkdir -p "$snap_dir"
+
+  cp "$source_disk" "$snap_dir/disk.qcow2"
+
+  printf '0\n' > "$snap_dir/refcount"
+
+  write_meta "$tag" "$parent" "$vm_name"
+
+  if [ "$parent" != "base" ] && [ "$parent" != "unknown" ]; then
+    bump_refcount "$parent"
+  fi
+
+  stderr "Snapshot created: $tag (parent: $parent)"
+}
+
+aq_snapshot() {
+  local sub=${1:-}
+  shift || true
+  case "$sub" in
+    create) aq_snapshot_create "$@" ;;
+    *)
+      stderr "Usage: aq snapshot create <vm-name> <tag>"
+      exit 1
+      ;;
+  esac
+}
+
 aq_ls() {
   [ ! -d "$BASE_DIR" ] && return 0
 
@@ -893,9 +959,9 @@ aq_ls() {
     cd "$BASE_DIR"
     for vm_dir in $(ls); do
       [ ! -d "$vm_dir" ] && continue
-      # Skip per-arch metadata directories (aarch64, x86_64)
+      # Skip per-arch metadata directories and snapshot infrastructure
       case "$vm_dir" in
-        aarch64|x86_64) continue ;;
+        aarch64|x86_64|snapshots|tags) continue ;;
       esac
       vm_name=$(basename "$vm_dir")
       if is_vm_running "$vm_name"; then
@@ -926,6 +992,7 @@ case $COMMAND in
   scp) aq_scp "$@" ;;
   rm) aq_rm "$@" ;;
   ls) aq_ls ;;
+  snapshot) aq_snapshot "$@" ;;
   "--version") aq_version ;;
   "" | "help" | "-h" | "--help") aq_help ;;
   *) stderr "Error: Unknown command $COMMAND."; exit 1 ;;
