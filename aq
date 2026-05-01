@@ -563,6 +563,16 @@ aq_new() {
     resolved=$(resolve_tag "$from_snapshot")
     # Marker tells aq_rm and get_refcount which snapshot this VM derives from.
     echo "$resolved" > "$BASE_DIR/$VM_NAME/.from_snapshot"
+
+    # If the snapshot has memory state, stage it for the next aq_start.
+    # Hard link first (instant, no copy); fall back to cp on EXDEV (cross-fs).
+    local has_memory
+    has_memory=$(read_meta "$resolved" has_memory 2>/dev/null || echo false)
+    if [ "$has_memory" = "true" ]; then
+      local src="$(snapshot_path "$resolved")/memory.bin"
+      local dst="$BASE_DIR/$VM_NAME/incoming-memory.bin"
+      ln "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
+    fi
   fi
 
   stderr Created:
