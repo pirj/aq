@@ -596,6 +596,21 @@ get_persistent_ssh_port() {
   fi
 }
 
+# Run an HMP command via the QMP wrapper. Returns when the HMP command
+# completes. The QMP wire format is JSON; we send qmp_capabilities then
+# the wrapped HMP command in a single connection. socat -t300 keeps the
+# socket open long enough for slow operations like `migrate` of a 1 GB
+# memory image (typical cap on aq VMs).
+qmp_hmp() {
+  local sock=$1
+  local hmp_cmd=$2
+  local escaped
+  escaped=$(printf '%s' "$hmp_cmd" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+  printf '{"execute":"qmp_capabilities"}\n{"execute":"human-monitor-command","arguments":{"command-line":"%s"}}\n' \
+    "$escaped" \
+    | socat -t300 - "UNIX-CONNECT:$sock" 2>/dev/null
+}
+
 # Add dynamic SSH port forwarding via QEMU monitor.
 # Use socat with -t1 (linger 1s after EOF) so qemu has time to read the
 # command before the connection is closed. Plain `nc -U` can race here.
@@ -738,6 +753,7 @@ aq_start() {
     -rtc base=utc,clock=host \
     -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on \
     -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$VM_NAME/control.sock,server=on,wait=off \
+    -qmp unix:$BASE_DIR/$VM_NAME/qmp.sock,server=on,wait=off \
     -daemonize -pidfile $BASE_DIR/$VM_NAME/process.pid \
     -name $VM_NAME \
     -display none \
