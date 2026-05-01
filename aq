@@ -189,7 +189,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.1.1
+VERSION=2.2.0
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2

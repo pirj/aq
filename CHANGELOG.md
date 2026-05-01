@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 2.2.0 "Resume" 2026-05-01
+
+### New Features
+
+- `aq snapshot create` on a *running* VM now captures live memory state via QMP `migrate file:<path>`. The VM is paused for a few seconds during capture, then resumes. `meta.json` records `has_memory: true` and `memory.bin` lives next to `disk.qcow2` in the snapshot dir.
+- `aq new --from-snapshot=<tag>` of a memory-bearing snapshot stages the memory file in the new VM dir as `incoming-memory.bin` (hard-linked, no copy on the same filesystem).
+- `aq start` of a VM with `incoming-memory.bin` launches qemu with `-incoming "file:<path>"` and resumes at the snapshot point. Measured: SSH reachable in ~1 s vs ~12 s for a cold boot. The incoming file is consumed and removed by qemu; subsequent `aq start` boots cold from the now-up-to-date `storage.qcow2`.
+
+### Internal
+
+- Every running VM now exposes a QMP socket at `<vm-dir>/qmp.sock` alongside the existing readline HMP `control.sock`. New `qmp_hmp` and `qmp_send` helpers send commands; `qmp_wait_migrate` polls for completion of outgoing migration; `qmp_wait_migrate_incoming` polls for incoming application.
+- After incoming migration, `aq start` issues HMP `cont` in a verify-and-retry loop because `cont` during the `inmigrate → paused` transition can no-op in some qemu versions.
+- `qemu-img info` calls now use `--force-share` so `aq snapshot create` can read backing-chain metadata while qemu holds an exclusive write lock.
+
+### Limitations
+
+- After live restore, the guest clock has rewound to the snapshot moment. Programs sensitive to wall-clock time may misbehave until NTP catches up.
+- `memory.bin` can be 100-300 MB on a freshly-booted Alpine; up to RAM size on a heavily-used VM. Storage planning is the operator's responsibility for now.
+
 ## 2.1.1 2026-05-01
 
 ### Bug Fixes

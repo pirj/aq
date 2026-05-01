@@ -46,7 +46,16 @@ aq picks the right backend at runtime via `uname`. Snapshots and per-VM state li
     aq start shard-2
     # Both shards start from the same provisioned state — no apk add, no bundle install.
 
-Snapshots are stored under `~/.local/share/aq/snapshots/<arch>/<tag>/` and live in the same architecture as the host. They are *cold* snapshots — disk state only, no live memory. New VMs cold-boot from the snapshot's disk; the kernel boots fresh, but everything you installed is already there.
+Snapshots are stored under `~/.local/share/aq/snapshots/<arch>/<tag>/` and live in the same architecture as the host. Cold snapshots (created from a stopped VM) capture disk state only; new VMs cold-boot from the snapshot's disk.
+
+**Live snapshots** — when you snapshot a *running* VM, aq also captures the live memory state. Restoring such a snapshot skips Alpine's boot entirely: the kernel, processes, network connections, and tmpfs contents come back as they were at the snapshot moment. SSH is reachable in ~1 s instead of ~12 s.
+
+    aq new myrails
+    aq start myrails
+    # provision, run a server, do work...
+    aq snapshot create myrails myrails-running   # VM stays running
+    aq new --from-snapshot=myrails-running fresh-shard
+    aq start fresh-shard                          # SSH ready in ~1s
 
 ### Install
 
