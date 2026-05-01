@@ -200,6 +200,111 @@ LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-$ARCH.raw
 
 migrate_base_dir_to_arch
 
+# --- Snapshot helpers ---------------------------------------------------------
+
+snapshots_dir() {
+  echo "$BASE_DIR/snapshots/$ARCH"
+}
+
+tags_dir() {
+  echo "$BASE_DIR/tags/$ARCH"
+}
+
+snapshot_path() {
+  local tag=$1
+  echo "$(snapshots_dir)/$tag"
+}
+
+tag_path() {
+  local name=$1
+  echo "$(tags_dir)/$name"
+}
+
+snapshot_exists() {
+  local tag=$1
+  [ -d "$(snapshot_path "$tag")" ]
+}
+
+resolve_tag() {
+  local input=$1
+  if snapshot_exists "$input"; then
+    echo "$input"
+    return 0
+  fi
+  local link
+  link=$(tag_path "$input")
+  if [ -L "$link" ]; then
+    basename "$(readlink "$link")"
+    return 0
+  fi
+  return 1
+}
+
+# Atomically write meta.json. Args: <tag> <parent> <source_vm>.
+write_meta() {
+  local tag=$1 parent=$2 source_vm=$3
+  local dir
+  dir=$(snapshot_path "$tag")
+  local now
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  printf '{\n' > "$dir/meta.json.tmp"
+  printf '  "tag": "%s",\n'         "$tag"                   >> "$dir/meta.json.tmp"
+  printf '  "parent": "%s",\n'      "$parent"                >> "$dir/meta.json.tmp"
+  printf '  "arch": "%s",\n'        "$ARCH"                  >> "$dir/meta.json.tmp"
+  printf '  "base_image": "%s",\n'  "$LATEST_ALPINE_BASE"    >> "$dir/meta.json.tmp"
+  printf '  "created": "%s",\n'     "$now"                   >> "$dir/meta.json.tmp"
+  printf '  "last_used": "%s",\n'   "$now"                   >> "$dir/meta.json.tmp"
+  printf '  "source_vm": "%s",\n'   "$source_vm"             >> "$dir/meta.json.tmp"
+  printf '  "has_memory": false\n'                           >> "$dir/meta.json.tmp"
+  printf '}\n'                                               >> "$dir/meta.json.tmp"
+  mv "$dir/meta.json.tmp" "$dir/meta.json"
+}
+
+# Read a single field from meta.json. Args: <tag> <field>.
+read_meta() {
+  local tag=$1 field=$2
+  local file
+  file=$(snapshot_path "$tag")/meta.json
+  [ -f "$file" ] || return 1
+  if [ "$field" = "has_memory" ]; then
+    grep -E '"has_memory":' "$file" | sed -E 's/.*"has_memory": (true|false).*/\1/' | head -1
+  else
+    grep -E "\"$field\":" "$file" | sed -E "s/.*\"$field\": \"([^\"]*)\".*/\1/" | head -1
+  fi
+}
+
+bump_refcount() {
+  local tag=$1
+  local file
+  file=$(snapshot_path "$tag")/refcount
+  local cur=0
+  [ -f "$file" ] && cur=$(cat "$file")
+  printf '%d\n' "$((cur + 1))" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+drop_refcount() {
+  local tag=$1
+  local file
+  file=$(snapshot_path "$tag")/refcount
+  local cur=0
+  [ -f "$file" ] && cur=$(cat "$file")
+  local next=$((cur - 1))
+  [ $next -lt 0 ] && next=0
+  printf '%d\n' "$next" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+get_refcount() {
+  local tag=$1
+  local file
+  file=$(snapshot_path "$tag")/refcount
+  [ -f "$file" ] || { echo 0; return; }
+  cat "$file"
+}
+
+# --- end snapshot helpers -----------------------------------------------------
+
 download_alpine_iso() {
   mkdir -p $BASE_DIR/$ARCH
   (
