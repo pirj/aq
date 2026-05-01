@@ -3,3 +3,4 @@
 set -eu
 cd "$(dirname "$0")/.."
 bash tests/smoke.sh
+bash tests/snapshots.sh
