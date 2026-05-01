@@ -1026,6 +1026,63 @@ aq_snapshot_tag() {
   stderr "Tag '$newname' -> snapshot '$resolved'"
 }
 
+# Internal: indented one-line rendering. Args: <edges-file> <tag> <depth>.
+_render_subtree() {
+  local edges=$1 tag=$2 depth=$3
+  local indent=""
+  local i=0
+  while [ $i -lt $depth ]; do
+    indent="$indent    "
+    i=$((i + 1))
+  done
+
+  local refs size last
+  refs=$(get_refcount "$tag")
+  size=$(du -h "$(snapshot_path "$tag")/disk.qcow2" 2>/dev/null | awk '{print $1}')
+  last=$(read_meta "$tag" last_used 2>/dev/null | cut -dT -f1)
+  printf '%s└── %s   [refs: %s, %s, %s]\n' "$indent" "$tag" "$refs" "${size:-?}" "${last:-?}"
+
+  awk -F'\t' -v p="$tag" '$1 == p { print $2 }' "$edges" | while read -r child; do
+    _render_subtree "$edges" "$child" "$((depth + 1))"
+  done
+}
+
+aq_snapshot_tree() {
+  local root=${1:-}
+  local dir
+  dir=$(snapshots_dir)
+  [ -d "$dir" ] || { stderr "No snapshots."; return 0; }
+
+  local edges
+  edges=$(mktemp)
+
+  set +f
+  for snap_dir in "$dir"/*/; do
+    [ -d "$snap_dir" ] || continue
+    local tag parent
+    tag=$(basename "$snap_dir")
+    parent=$(read_meta "$tag" parent 2>/dev/null || echo "?")
+    printf '%s\t%s\n' "$parent" "$tag" >> "$edges"
+  done
+  set -f
+
+  if [ -n "$root" ]; then
+    if ! snapshot_exists "$root"; then
+      rm -f "$edges"
+      stderr "Error: snapshot '$root' does not exist."
+      exit 1
+    fi
+    _render_subtree "$edges" "$root" 0
+  else
+    echo "base (alpine-$LATEST_ALPINE_VERSION-$ARCH)"
+    awk -F'\t' '$1 == "base" { print $2 }' "$edges" | while read -r child; do
+      _render_subtree "$edges" "$child" 1
+    done
+  fi
+
+  rm -f "$edges"
+}
+
 aq_snapshot() {
   local sub=${1:-}
   shift || true
@@ -1034,8 +1091,9 @@ aq_snapshot() {
     ls)     aq_snapshot_ls "$@" ;;
     rm)     aq_snapshot_rm "$@" ;;
     tag)    aq_snapshot_tag "$@" ;;
+    tree)   aq_snapshot_tree "$@" ;;
     *)
-      stderr "Usage: aq snapshot {create|ls|rm|tag} ..."
+      stderr "Usage: aq snapshot {create|ls|rm|tag|tree} ..."
       exit 1
       ;;
   esac
