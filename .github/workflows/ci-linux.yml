@@ -2,7 +2,6 @@ name: CI (Linux)
 
 on:
   push:
-    branches: [main, phase-1-linux-host-support]
   pull_request:
 
 jobs:
