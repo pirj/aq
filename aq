@@ -482,19 +482,46 @@ stderr() {
 
 aq_new() {
   forwards=()
-  while [ $# -gt 1 ]; do
-    name=$1
-    fwd=$2
-    if [ "$name" = "-p" ]; then
-      forwards+=($fwd); shift; shift
-    fi
+  local from_snapshot=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -p)
+        forwards+=("$2"); shift; shift
+        ;;
+      --from-snapshot=*)
+        from_snapshot="${1#--from-snapshot=}"; shift
+        ;;
+      --from-snapshot)
+        from_snapshot="$2"; shift; shift
+        ;;
+      *)
+        break
+        ;;
+    esac
   done
+
   if [ $# -gt 0 ]; then
     VM_NAME=$1
   else
     VM_NAME=$(random_vm_name)
   fi
-  ensure_base_image
+
+  local backing_file backing_fmt
+  if [ -n "$from_snapshot" ]; then
+    local resolved
+    resolved=$(resolve_tag "$from_snapshot") || {
+      stderr "Error: snapshot or alias '$from_snapshot' does not exist."
+      exit 1
+    }
+    backing_file="$(snapshot_path "$resolved")/disk.qcow2"
+    backing_fmt=qcow2
+    [ -f "$backing_file" ] || { stderr "Error: snapshot disk not found: $backing_file"; exit 1; }
+  else
+    ensure_base_image
+    backing_file="$BASE_DIR/$ARCH/$LATEST_ALPINE_BASE"
+    backing_fmt=raw
+  fi
+
   (
     cd $BASE_DIR
     mkdir $VM_NAME
@@ -505,7 +532,7 @@ aq_new() {
         echo $forward >> hostfwd.conf
       done
     fi
-    qemu-img create -b $BASE_DIR/$ARCH/$LATEST_ALPINE_BASE -F raw -f qcow2 storage.qcow2 2G 1>/dev/null
+    qemu-img create -b "$backing_file" -F "$backing_fmt" -f qcow2 storage.qcow2 2G 1>/dev/null
 
     case "$UEFI_VARS_FLAVOR" in
       sysbus_json)
@@ -518,8 +545,20 @@ aq_new() {
         ;;
     esac
 
-    touch .needs_first_boot_setup
+    if [ -z "$from_snapshot" ]; then
+      # Fresh VM from base needs partition resize on first boot.
+      touch .needs_first_boot_setup
+    fi
+    # Snapshot-derived VMs already contain a provisioned rootfs; skip first_boot_setup.
   )
+
+  if [ -n "$from_snapshot" ]; then
+    local resolved
+    resolved=$(resolve_tag "$from_snapshot")
+    bump_refcount "$resolved"
+    echo "$resolved" > "$BASE_DIR/$VM_NAME/.from_snapshot"
+  fi
+
   stderr Created:
   echo $VM_NAME
 }
@@ -722,10 +761,15 @@ aq_stop() {
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq stop <vm-name>`.' && exit 1
   ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
 
+  # Flush guest filesystem caches via SSH before killing qemu so disk state is
+  # consistent on next start (and durable for snapshotting).
+  if is_vm_running "$VM_NAME"; then
+    vm_ssh "$VM_NAME" 'sync && sync' 2>/dev/null || true
+  fi
+
   # Clean up SSH port allocation file
   rm -f "$BASE_DIR/$VM_NAME/ssh-port.conf"
 
-  # Only attempt to quit QEMU if VM is actually running
   if is_vm_running "$VM_NAME"; then
     echo quit | nc -U $BASE_DIR/$VM_NAME/control.sock 1>/dev/null
   fi
@@ -882,6 +926,15 @@ aq_rm() {
   ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
 
   aq_stop $VM_NAME
+
+  # If this VM was derived from a snapshot, drop that snapshot's refcount.
+  local from_marker="$BASE_DIR/$VM_NAME/.from_snapshot"
+  if [ -f "$from_marker" ]; then
+    local snap
+    snap=$(cat "$from_marker")
+    [ -n "$snap" ] && drop_refcount "$snap"
+  fi
+
   rm -rf $BASE_DIR/$VM_NAME
   stderr "Removed" $VM_NAME
 }
