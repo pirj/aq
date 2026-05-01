@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2.1.1 2026-05-01
+
+### Bug Fixes
+
+- Snapshot refcount is now computed on demand from authoritative state (VMs with `.from_snapshot` marker matching the tag, plus snapshots whose `meta.json` parent matches the tag). Previously, the count was kept in a `refcount` file that could drift under crashes, manual file edits, or concurrent operations — the dangerous failure mode being a stuck-zero count that let `aq snapshot rm` silently delete a snapshot still backing a live VM. Removing the cache eliminates the drift class entirely.
+
 ## 2.1.0 "Frozen" 2026-05-01
 
 ### New Features
