@@ -1002,6 +1002,30 @@ aq_snapshot_rm() {
   stderr "Snapshot removed: $tag"
 }
 
+aq_snapshot_tag() {
+  local existing=${1:-}
+  local newname=${2:-}
+  [ -z "$existing" ] && stderr 'Error: existing tag required: `aq snapshot tag <existing> <new>`.' && exit 1
+  [ -z "$newname" ]  && stderr 'Error: new alias name required: `aq snapshot tag <existing> <new>`.' && exit 1
+
+  local resolved
+  resolved=$(resolve_tag "$existing") || {
+    stderr "Error: snapshot or alias '$existing' does not exist."
+    exit 1
+  }
+
+  if snapshot_exists "$newname"; then
+    stderr "Error: '$newname' is itself a snapshot tag. Pick a different alias name."
+    exit 1
+  fi
+
+  mkdir -p "$(tags_dir)"
+  local link
+  link=$(tag_path "$newname")
+  ln -sfn "../../snapshots/$ARCH/$resolved" "$link"
+  stderr "Tag '$newname' -> snapshot '$resolved'"
+}
+
 aq_snapshot() {
   local sub=${1:-}
   shift || true
@@ -1009,8 +1033,9 @@ aq_snapshot() {
     create) aq_snapshot_create "$@" ;;
     ls)     aq_snapshot_ls "$@" ;;
     rm)     aq_snapshot_rm "$@" ;;
+    tag)    aq_snapshot_tag "$@" ;;
     *)
-      stderr "Usage: aq snapshot {create|ls|rm} ..."
+      stderr "Usage: aq snapshot {create|ls|rm|tag} ..."
       exit 1
       ;;
   esac
