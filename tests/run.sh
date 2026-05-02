@@ -5,3 +5,4 @@ cd "$(dirname "$0")/.."
 bash tests/smoke.sh
 bash tests/snapshots.sh
 bash tests/live-snapshots.sh
+bash tests/fanout.sh
