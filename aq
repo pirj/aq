@@ -489,6 +489,7 @@ stderr() {
 aq_new() {
   forwards=()
   local from_snapshot=""
+  local count=1
   while [ $# -gt 0 ]; do
     case "$1" in
       -p)
@@ -500,17 +501,62 @@ aq_new() {
       --from-snapshot)
         from_snapshot="$2"; shift; shift
         ;;
+      --count=*)
+        count="${1#--count=}"; shift
+        ;;
+      --count)
+        count="$2"; shift; shift
+        ;;
       *)
         break
         ;;
     esac
   done
 
-  if [ $# -gt 0 ]; then
-    VM_NAME=$1
-  else
-    VM_NAME=$(random_vm_name)
+  if ! [ "$count" -ge 1 ] 2>/dev/null; then
+    stderr 'Error: --count must be a positive integer.'; exit 1
   fi
+
+  if [ "$count" -gt 1 ] && [ -z "$from_snapshot" ]; then
+    stderr 'Error: --count requires --from-snapshot=<tag>.'
+    stderr 'Creating N VMs from a fresh base would still need first_boot_setup on each — use a snapshot.'
+    exit 1
+  fi
+
+  # Single-VM path.
+  if [ "$count" -eq 1 ]; then
+    if [ $# -gt 0 ]; then
+      VM_NAME=$1
+    else
+      VM_NAME=$(random_vm_name)
+    fi
+    _aq_new_one "$from_snapshot" "$VM_NAME"
+    stderr Created:
+    echo $VM_NAME
+    return 0
+  fi
+
+  # Counted path: <prefix>-0 .. <prefix>-(N-1).
+  local prefix
+  if [ $# -gt 0 ]; then
+    prefix=$1
+  else
+    prefix="shard-$$"
+  fi
+
+  stderr "Creating $count VMs as $prefix-0..$prefix-$((count-1))"
+  local i=0
+  while [ $i -lt $count ]; do
+    _aq_new_one "$from_snapshot" "$prefix-$i"
+    echo "$prefix-$i"
+    i=$((i + 1))
+  done
+}
+
+# Inner: create exactly one VM. Args: <from_snapshot-or-empty> <vm-name>.
+_aq_new_one() {
+  local from_snapshot=$1
+  local vm_name=$2
 
   local backing_file backing_fmt
   if [ -n "$from_snapshot" ]; then
@@ -528,10 +574,15 @@ aq_new() {
     backing_fmt=raw
   fi
 
+  if [ -d "$BASE_DIR/$vm_name" ]; then
+    stderr "Error: VM '$vm_name' already exists."
+    exit 1
+  fi
+
   (
     cd $BASE_DIR
-    mkdir $VM_NAME
-    cd $VM_NAME
+    mkdir $vm_name
+    cd $vm_name
     touch hostfwd.conf
     if [ ${#forwards[@]} -gt 0 ]; then
       for forward in "${forwards[@]}"; do
@@ -561,22 +612,16 @@ aq_new() {
   if [ -n "$from_snapshot" ]; then
     local resolved
     resolved=$(resolve_tag "$from_snapshot")
-    # Marker tells aq_rm and get_refcount which snapshot this VM derives from.
-    echo "$resolved" > "$BASE_DIR/$VM_NAME/.from_snapshot"
+    echo "$resolved" > "$BASE_DIR/$vm_name/.from_snapshot"
 
-    # If the snapshot has memory state, stage it for the next aq_start.
-    # Hard link first (instant, no copy); fall back to cp on EXDEV (cross-fs).
     local has_memory
     has_memory=$(read_meta "$resolved" has_memory 2>/dev/null || echo false)
     if [ "$has_memory" = "true" ]; then
       local src="$(snapshot_path "$resolved")/memory.bin"
-      local dst="$BASE_DIR/$VM_NAME/incoming-memory.bin"
+      local dst="$BASE_DIR/$vm_name/incoming-memory.bin"
       ln "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
     fi
   fi
-
-  stderr Created:
-  echo $VM_NAME
 }
 
 # Supports 2222:22, or just 22, returns formatted hostfwd=tcp::2222-:22
