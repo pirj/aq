@@ -1333,6 +1333,124 @@ aq_snapshot() {
   esac
 }
 
+aq_fanout() {
+  local tag=""
+  local n=""
+  local keep=0
+  local prefix=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --keep) keep=1; shift ;;
+      --prefix=*) prefix="${1#--prefix=}"; shift ;;
+      --prefix) prefix="$2"; shift; shift ;;
+      --) shift; break ;;
+      *)
+        if [ -z "$tag" ]; then
+          tag="$1"; shift
+        elif [ -z "$n" ]; then
+          n="$1"; shift
+        else
+          break
+        fi
+        ;;
+    esac
+  done
+
+  [ -z "$tag" ] && { stderr 'Usage: aq fanout <tag> <N> [--keep] [--prefix=<name>] -- <command...>'; exit 1; }
+  [ -z "$n" ]   && { stderr 'Usage: aq fanout <tag> <N> [--keep] [--prefix=<name>] -- <command...>'; exit 1; }
+  [ $# -eq 0 ]  && { stderr 'Usage: aq fanout <tag> <N> [--keep] [--prefix=<name>] -- <command...>'; exit 1; }
+
+  if ! [ "$n" -gt 0 ] 2>/dev/null; then
+    stderr "Error: N must be a positive integer (got '$n')."; exit 1
+  fi
+
+  if ! resolve_tag "$tag" >/dev/null; then
+    stderr "Error: snapshot or alias '$tag' does not exist."; exit 1
+  fi
+
+  [ -z "$prefix" ] && prefix="shard-$$"
+
+  stderr "[fanout] creating $n VM(s) from snapshot '$tag' as '$prefix-0..$prefix-$((n-1))'"
+  aq_new --from-snapshot="$tag" --count="$n" "$prefix" >/dev/null
+
+  if [ "$keep" -eq 0 ]; then
+    trap "_aq_fanout_cleanup '$prefix' '$n'" EXIT
+  fi
+
+  stderr "[fanout] starting all $n shards in parallel"
+  local i=0
+  while [ $i -lt $n ]; do
+    "$0" start "$prefix-$i" >/dev/null 2>&1 &
+    i=$((i + 1))
+  done
+  wait
+
+  stderr "[fanout] dispatching command to $n shards"
+  local cmd=("$@")
+  local pids=()
+  local exit_files=()
+  i=0
+  while [ $i -lt $n ]; do
+    local exit_file
+    exit_file=$(mktemp)
+    exit_files+=("$exit_file")
+    (
+      _aq_fanout_run_shard "$prefix" "$i" "$n" "${cmd[@]}"
+      # >| forces overwrite under noclobber (set -C).
+      echo $? >| "$exit_file"
+    ) &
+    pids+=($!)
+    i=$((i + 1))
+  done
+  wait "${pids[@]}" 2>/dev/null || true
+
+  local max_exit=0
+  i=0
+  while [ $i -lt $n ]; do
+    local code
+    code=$(cat "${exit_files[$i]}" 2>/dev/null || echo 1)
+    rm -f "${exit_files[$i]}"
+    [ "$code" -gt "$max_exit" ] && max_exit=$code
+    i=$((i + 1))
+  done
+
+  stderr "[fanout] all shards finished (max exit $max_exit)"
+  exit "$max_exit"
+}
+
+# Run user command in one shard via SSH with AQ_SHARD_INDEX/AQ_SHARD_TOTAL,
+# prefixing every output line with [<vm>].
+#
+# The command runs through `sh -s` reading from ssh stdin. We send "export"
+# lines before the user command so that the user's command (which may
+# contain $AQ_SHARD_INDEX literally) sees the variables when it parses.
+# Using `VAR=val cmd` inline doesn't work here because $VAR in the same
+# command line is expanded by the parent shell before the assignment
+# takes effect for the child (classic POSIX gotcha).
+_aq_fanout_run_shard() {
+  local prefix=$1 i=$2 total=$3
+  shift 3
+  local vm="$prefix-$i"
+  {
+    printf 'export AQ_SHARD_INDEX=%s\n' "$i"
+    printf 'export AQ_SHARD_TOTAL=%s\n' "$total"
+    printf '%s\n' "$*"
+  } | vm_ssh "$vm" 'sh -s' 2>&1 \
+    | awk -v tag="$vm" '{ print "[" tag "] " $0 }'
+  return ${PIPESTATUS[1]}
+}
+
+# Stop and remove every shard in the fleet. Args: <prefix> <count>.
+_aq_fanout_cleanup() {
+  local prefix=$1 n=$2
+  local i=0
+  while [ $i -lt $n ]; do
+    "$0" rm "$prefix-$i" >/dev/null 2>&1 &
+    i=$((i + 1))
+  done
+  wait
+}
+
 aq_ls() {
   [ ! -d "$BASE_DIR" ] && return 0
 
@@ -1374,6 +1492,7 @@ case $COMMAND in
   rm) aq_rm "$@" ;;
   ls) aq_ls ;;
   snapshot) aq_snapshot "$@" ;;
+  fanout) aq_fanout "$@" ;;
   "--version") aq_version ;;
   "" | "help" | "-h" | "--help") aq_help ;;
   *) stderr "Error: Unknown command $COMMAND."; exit 1 ;;
