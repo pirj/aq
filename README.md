@@ -57,6 +57,16 @@ Snapshots are stored under `~/.local/share/aq/snapshots/<arch>/<tag>/` and live 
     aq new --from-snapshot=myrails-running fresh-shard
     aq start fresh-shard                          # SSH ready in ~1s
 
+### Fan-out
+
+Run N parallel VMs derived from one snapshot, executing a command per shard:
+
+    aq fanout rails-deps 8 -- /root/repo/bin/test-shard
+
+Each shard receives `AQ_SHARD_INDEX` (0..N-1) and `AQ_SHARD_TOTAL` (=N) in its environment, so a test runner can pick its slice. All shards back onto the same `disk.qcow2` (delta-only writes per shard); if the snapshot has memory state, each shard restores from the same `memory.bin`. Output is multiplexed with a `[shard-<name>]` line prefix, exit code is the max of children's, and shards are torn down after the command finishes (use `--keep` to opt out).
+
+For a finer-grained pipeline you can also use `aq new --from-snapshot=<tag> --count=N <prefix>` to create the fleet and drive it yourself with `aq start`, `aq exec`, `aq stop`, `aq rm`.
+
 ### Install
 
 #### macOS

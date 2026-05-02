@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 2.3.0 "Swarm" 2026-05-02
+
+### New Features
+
+- `aq new --from-snapshot=<tag> --count=N [prefix]` creates N VMs named `<prefix>-0` ... `<prefix>-(N-1)`, each backing onto the snapshot's `disk.qcow2`. Default prefix is `shard-$$` if omitted.
+- `aq fanout <tag> <N> [--keep] [--prefix=<name>] -- <command...>` is the CI-style helper: builds the fleet, starts all shards in parallel, runs the user command in each shard with `AQ_SHARD_INDEX` / `AQ_SHARD_TOTAL` set, multiplexes per-shard output with a `[shard-<name>]` prefix, waits for all to finish, aggregates exit codes (max), and tears the fleet down (unless `--keep`).
+
+### Internal
+
+- `aq_new` body refactored into a `_aq_new_one` inner function so the counted loop can call it without duplication.
+- `aq_fanout` uses `awk` for line-prefixed output multiplexing (no per-line fork overhead); per-shard exit codes are written to mktemp files (with `>|` to bypass noclobber) and read back after `wait`. Each shard runs in a `set +e` subshell so a non-zero user exit doesn't skip writing the code.
+- Per-shard env vars are propagated by piping `export …` lines plus the user command through `sh -s` over SSH. Inline `VAR=val cmd` doesn't work for `$VAR`-referencing commands because the parent shell expands `$VAR` before the assignment takes effect for the child.
+
+### Limitations
+
+- All shards share the same host directory tree (no cross-shard FS isolation beyond the per-VM qcow2 overlay).
+- No CPU / memory caps per shard yet — relies on Linux KSM / macOS page cache to dedup the read-only snapshot pages across shards.
+
 ## 2.2.0 "Resume" 2026-05-01
 
 ### New Features
