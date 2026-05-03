@@ -189,7 +189,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.3.0
+VERSION=2.3.1
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -460,9 +460,17 @@ SETUP_CONF_END
     # Best-effort: clean up /root/setup.conf from the installed rootfs.
     # No serial-getty / grub-console hacks here — aq_start now uses SSH for
     # runtime, so the installed VM doesn't need a serial login prompt.
-    echo "mkdir -p /target; mount /dev/vda3 /target; rm -f /target/root/setup.conf; umount /target; printf 'CLEANUP_%s_OK\n' \"\$(uname -m)\"" | socat STDIO UNIX:command.sock
-
-    wait_for "expect(\"CLEANUP_${ARCH}_OK\")"
+    #
+    # We do NOT wait for a sentinel here. After setup-alpine returns, leftover
+    # output from background subprocesses (kernel messages, udhcpc lease
+    # renewal, progress-bar carriage returns from apk) can flood the serial
+    # input loop and the shell echoes them back as "-sh: ^M: not found" for
+    # minutes. The cleanup commands themselves are short; a brief sleep is
+    # enough for them to land before we poweroff. If they don't land, the
+    # only consequence is a stale /root/setup.conf inside the installed VM —
+    # cosmetic, not a functional problem.
+    echo "mkdir -p /target; mount /dev/vda3 /target; rm -f /target/root/setup.conf; umount /target" | socat STDIO UNIX:command.sock
+    sleep 2
 
     echo poweroff | socat STDIO UNIX:command.sock
 

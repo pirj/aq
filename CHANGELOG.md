@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2.3.1 2026-05-03
+
+### Bug Fixes
+
+- `bootstrap_base_image` no longer waits for a sentinel after the post-install cleanup heredoc. After `setup-alpine` completes, leftover output from kernel messages, `udhcpc` lease renewals, and apk progress-bar carriage returns can flood the serial input loop, with the live ISO shell echoing them back as `-sh: ^M: not found` indefinitely. The wait_for would never see the cleanup sentinel, hang, and cause the bootstrap to time out. The cleanup is now best-effort with a short sleep instead — if the rm/umount didn't land, the only consequence is a stale `/root/setup.conf` in the installed VM (cosmetic).
+
 ## 2.3.0 "Swarm" 2026-05-02
 
 ### New Features
