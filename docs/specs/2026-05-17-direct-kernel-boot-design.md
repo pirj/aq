@@ -57,6 +57,38 @@ Examples:
 Every base file is pre-partitioned to its full declared size, with the
 ext4 rootfs already grown to fill `/dev/vda3`. No first-boot resize.
 
+### Why raw format for the base, qcow2 only for overlays
+
+The base file is `.raw`, not `.qcow2`. This continues the existing aq
+decision (recorded in `ROADMAP.md`: "use raw for the base image to
+improve bootstrap time"). Rationale:
+
+- **Lower read latency on the hot boot path.** qcow2 reads parse the
+  cluster table for every guest block access. Raw is a direct file read.
+  During VM boot, the guest reads initramfs, kernel modules, init
+  scripts, system libraries — all from the base. Cumulative latency
+  savings matter.
+- **Sparseness is preserved at the filesystem layer.** APFS on macOS and
+  ext4 on Linux support sparse files natively. An 8 GB raw file with
+  ~470 MB of actual content occupies ~470 MB on disk, same as a qcow2
+  would. There is no disk-space penalty for raw.
+- **Overlays still get qcow2 benefits.** Per-VM `storage.qcow2` is qcow2
+  with `base.raw` as its backing file. Copy-on-write semantics,
+  sparse-on-write allocation, and backing-chain references all live in
+  the overlay, where they belong.
+
+The `qemu-img create` invocation is:
+```
+qemu-img create -b $base.raw -F raw -f qcow2 storage.qcow2 ${SIZE}
+```
+`-F raw` declares the backing format explicitly — without it qemu emits a
+security warning about undeclared backing format.
+
+Depot.dev's setup uses qcow2 bases (Cloud Hypervisor with direct I/O). We
+stay on raw because (a) we're on QEMU, and (b) the existing aq pattern
+has already been validated. Switching to qcow2 bases would be a separate
+exercise with its own benchmarks; out of scope here.
+
 `aq new` accepts `--size=N` (default `2G` — same as today's effective
 size):
 
