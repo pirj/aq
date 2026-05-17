@@ -218,7 +218,12 @@ LATEST_ALPINE_VERSION=3.22.2
 LATEST_ALPINE_MAJOR_MINOR=3.22
 LATEST_ALPINE_ISO=alpine-virt-$LATEST_ALPINE_VERSION-$ARCH.iso
 
-LATEST_ALPINE_BASE=alpine-base-$LATEST_ALPINE_VERSION-$ARCH.raw
+# Per-size base filename. Replaces the old LATEST_ALPINE_BASE constant.
+# Args: <size-int-G>. Re-evaluated per call; do not capture into a variable
+# that outlives the call (different VMs may have different sizes).
+alpine_base_for_size() {
+  compute_base_filename "$LATEST_ALPINE_VERSION" "$ARCH" "$1"
+}
 
 migrate_base_dir_to_arch
 
@@ -264,7 +269,7 @@ resolve_tag() {
 
 # Atomically write meta.json. Args: <tag> <parent> <source_vm>.
 write_meta() {
-  local tag=$1 parent=$2 source_vm=$3 has_memory=${4:-false}
+  local tag=$1 parent=$2 source_vm=$3 has_memory=${4:-false} base_image=${5:-unknown}
   local dir
   dir=$(snapshot_path "$tag")
   local now
@@ -273,7 +278,7 @@ write_meta() {
   printf '  "tag": "%s",\n'         "$tag"                   >> "$dir/meta.json.tmp"
   printf '  "parent": "%s",\n'      "$parent"                >> "$dir/meta.json.tmp"
   printf '  "arch": "%s",\n'        "$ARCH"                  >> "$dir/meta.json.tmp"
-  printf '  "base_image": "%s",\n'  "$LATEST_ALPINE_BASE"    >> "$dir/meta.json.tmp"
+  printf '  "base_image": "%s",\n'  "${base_image:-unknown}" >> "$dir/meta.json.tmp"
   printf '  "created": "%s",\n'     "$now"                   >> "$dir/meta.json.tmp"
   printf '  "last_used": "%s",\n'   "$now"                   >> "$dir/meta.json.tmp"
   printf '  "source_vm": "%s",\n'   "$source_vm"             >> "$dir/meta.json.tmp"
@@ -367,20 +372,24 @@ wait_for() {
 }
 
 ensure_base_image() {
-  [ -f $BASE_DIR/$ARCH/$LATEST_ALPINE_BASE ] || bootstrap_base_image
+  local size="$1"
+  local fname; fname=$(alpine_base_for_size "$size")
+  [ -f "$BASE_DIR/$ARCH/$fname" ] || bootstrap_base_image "$size"
 }
 
 bootstrap_base_image() {
+  local size="$1"
+  local fname; fname=$(alpine_base_for_size "$size")
   download_alpine_iso
   (
     mkdir -p $BASE_DIR/$ARCH
     cd $BASE_DIR/$ARCH
 
     # Start from scratch
-    rm -f wip-$LATEST_ALPINE_BASE
+    rm -f "wip-$fname"
     rm -f uefi-vars.json uefi-vars.fd
 
-    qemu-img create -f raw wip-$LATEST_ALPINE_BASE 500M 1>/dev/null
+    qemu-img create -f raw "wip-$fname" "${size}G" 1>/dev/null
 
     ensure_uefi_vars $BASE_DIR/$ARCH
 
@@ -388,7 +397,7 @@ bootstrap_base_image() {
       -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m 1G \
       -drive file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0 \
       $(uefi_vars_args $BASE_DIR/$ARCH) \
-      -drive if=virtio,file=$BASE_DIR/$ARCH/wip-$LATEST_ALPINE_BASE,format=raw,cache=none \
+      -drive if=virtio,file="$BASE_DIR/$ARCH/wip-$fname",format=raw,cache=none \
       -boot order=cd -cdrom $BASE_DIR/$ARCH/$LATEST_ALPINE_ISO \
       -nic user,model=virtio-net-pci \
       -rtc base=utc,clock=host \
@@ -507,8 +516,8 @@ SETUP_CONF_END
       sysbus_json) chmod -w uefi-vars.json ;;
       pflash_fd)   chmod -w uefi-vars.fd ;;
     esac
-    mv $BASE_DIR/$ARCH/{wip-,}$LATEST_ALPINE_BASE
-    chmod -w $BASE_DIR/$ARCH/$LATEST_ALPINE_BASE
+    mv "$BASE_DIR/$ARCH/wip-$fname" "$BASE_DIR/$ARCH/$fname"
+    chmod -w "$BASE_DIR/$ARCH/$fname"
   )
 }
 
@@ -636,8 +645,8 @@ _aq_new_one() {
     backing_fmt=qcow2
     [ -f "$backing_file" ] || { stderr "Error: snapshot disk not found: $backing_file"; exit 1; }
   else
-    ensure_base_image
-    backing_file="$BASE_DIR/$ARCH/$LATEST_ALPINE_BASE"
+    ensure_base_image "${NEW_SIZE:-2}"
+    backing_file="$BASE_DIR/$ARCH/$(alpine_base_for_size "${NEW_SIZE:-2}")"
     backing_fmt=raw
   fi
 
@@ -1190,9 +1199,13 @@ aq_snapshot_create() {
             | sed -E 's/.*"backing-filename": "([^"]*)".*/\1/' \
             | head -1; } || true )
   local parent="base"
+  local base_image_name=""
   if [ -n "$backing" ]; then
     case "$backing" in
-      *"$LATEST_ALPINE_BASE") parent="base" ;;
+      */alpine-base-*-"$ARCH"-*G.raw)
+        parent="base"
+        base_image_name="${backing##*/}"
+        ;;
       *snapshots/*/disk.qcow2)
         parent=$(echo "$backing" | sed -E 's|.*/snapshots/[^/]+/([^/]+)/disk.qcow2|\1|')
         ;;
@@ -1238,7 +1251,7 @@ aq_snapshot_create() {
     cp "$source_disk" "$snap_dir/disk.qcow2"
   fi
 
-  write_meta "$tag" "$parent" "$vm_name" "$has_memory"
+  write_meta "$tag" "$parent" "$vm_name" "$has_memory" "$base_image_name"
 
   if [ "$has_memory" = true ]; then
     stderr "Snapshot created: $tag (parent: $parent, with memory)"
