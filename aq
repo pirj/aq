@@ -112,6 +112,28 @@ detect_host() {
   esac
 }
 
+# Parse a size argument like "8G" -> "8". Validates suffix is "G" and
+# numeric part is a positive integer. Prints the integer or errors out.
+parse_size_arg() {
+  local arg="$1"
+  case "$arg" in
+    [1-9]G|[1-9][0-9]G|[1-9][0-9][0-9]G)
+      echo "${arg%G}"
+      ;;
+    *)
+      stderr "Error: invalid size '$arg'. Expected positive integer followed by G (e.g. 8G, 16G, 32G)."
+      return 1
+      ;;
+  esac
+}
+
+# Compose a size-specific base filename.
+# Usage: compute_base_filename <alpine-version> <arch> <size-int-G>
+compute_base_filename() {
+  local version="$1" arch="$2" size="$3"
+  echo "alpine-base-${version}-${arch}-${size}G.raw"
+}
+
 # Emit qemu CLI fragment for UEFI variable storage, depending on host firmware flavor.
 # Arg: directory containing the per-VM (or shared base) UEFI vars file.
 uefi_vars_args() {
@@ -1490,6 +1512,12 @@ aq_ls() {
     done
   )
 }
+
+# Sourced-only mode: tests source this file just to call helpers.
+# Defined functions remain available; dispatch is skipped.
+if [ "${__AQ_SOURCED_ONLY:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 [ $# -gt 0 ] && { COMMAND=$1; shift; } || COMMAND=""
 case $COMMAND in
