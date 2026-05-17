@@ -360,52 +360,85 @@ Kernel and initramfs are reused across sizes (same Alpine version + arch). We on
 
 - [ ] **Step 2: Add extraction logic to `bootstrap_base_image`**
 
-Right after the existing post-install cleanup (around line 472-475) and BEFORE the final `mv` (~line 488), add:
+The existing cleanup phase (around line 472) already does:
 
 ```bash
-    # Kernel + initramfs are per (arch, Alpine version), reused across sizes.
-    # Skip if already extracted from an earlier base build.
-    if [ ! -f "$BASE_DIR/$ARCH/vmlinuz-virt" ] || [ ! -f "$BASE_DIR/$ARCH/initramfs-virt" ]; then
-      stderr "Extracting kernel + initramfs (one-time per arch)..."
+echo "mkdir -p /target; mount /dev/vda3 /target; rm -f /target/root/setup.conf; umount /target" | socat STDIO UNIX:command.sock
+```
 
-      # Reboot the VM so it boots from the installed disk (not the ISO).
-      echo reboot | socat STDIO UNIX:command.sock
-      # Wait for socket to drop and reappear (rough proxy for reboot).
-      sleep 3
+This runs in the **live ISO Alpine**, with the installed Alpine's rootfs mounted at `/target`. The installed kernel + initramfs are at `/target/boot/vmlinuz-virt` and `/target/boot/initramfs-virt`.
 
-      # Re-attach control socket: aq's wait_for shim listens via serial again.
-      # The installed Alpine boots into serial console; we wait for the login
-      # prompt indicating the system is fully up.
-      wait_for 'expect("alpine login: "); write("root\n")'
-      sleep 1
+We DO NOT reboot into the installed Alpine — setup-alpine does not configure a serial-getty (per the existing comment in aq), so a serial login prompt would never appear. Instead, we read kernel files while still in the live ISO Alpine, before unmounting `/target`.
 
-      # SSH should be running now (sshd was installed via setup.conf).
-      # Find the forwarded SSH port — we don't expose one yet at base-build
-      # time, so use serial to call out: read the kernel and write to host
-      # via socat. We use base64-on-the-wire for binary safety, then decode.
-      echo "base64 < /boot/vmlinuz-virt; echo __END_VMLINUZ__" | socat STDIO UNIX:command.sock \
-        > "$BASE_DIR/$ARCH/wip-vmlinuz-virt.b64"
-      sed -e '1d' -e '/__END_VMLINUZ__/,$d' "$BASE_DIR/$ARCH/wip-vmlinuz-virt.b64" | base64 -d \
-        > "$BASE_DIR/$ARCH/wip-vmlinuz-virt"
-      rm -f "$BASE_DIR/$ARCH/wip-vmlinuz-virt.b64"
+Replace the existing single-line `mkdir /target; ... umount /target` invocation with a multi-line flow that also extracts kernel files:
 
-      echo "base64 < /boot/initramfs-virt; echo __END_INITRAMFS__" | socat STDIO UNIX:command.sock \
-        > "$BASE_DIR/$ARCH/wip-initramfs-virt.b64"
-      sed -e '1d' -e '/__END_INITRAMFS__/,$d' "$BASE_DIR/$ARCH/wip-initramfs-virt.b64" | base64 -d \
-        > "$BASE_DIR/$ARCH/wip-initramfs-virt"
-      rm -f "$BASE_DIR/$ARCH/wip-initramfs-virt.b64"
+```bash
+    # If kernel/initramfs are already extracted for this arch, just clean up
+    # setup.conf and unmount (matches existing behaviour).
+    if [ -f "$BASE_DIR/$ARCH/vmlinuz-virt" ] && [ -f "$BASE_DIR/$ARCH/initramfs-virt" ]; then
+      echo "mkdir -p /target; mount /dev/vda3 /target; rm -f /target/root/setup.conf; umount /target" \
+        | socat STDIO UNIX:command.sock
+    else
+      stderr "Extracting kernel + initramfs (one-time per arch, ~30 s)..."
+
+      # Mount the installed rootfs and clean up.
+      echo "mkdir -p /target && mount /dev/vda3 /target && rm -f /target/root/setup.conf" \
+        | socat STDIO UNIX:command.sock
+
+      # Stream vmlinuz-virt and initramfs-virt out via serial+base64. The
+      # sentinel lines bracket the payload; we strip them on the host.
+      # Each blob is read in one `socat` invocation. base64 with -w0 keeps
+      # the stream as a single long line (avoids busybox quirks with line
+      # wrapping at varying widths).
+      {
+        echo "echo __VMLINUZ_BEGIN__"
+        echo "base64 -w0 /target/boot/vmlinuz-virt"
+        echo "echo"
+        echo "echo __VMLINUZ_END__"
+      } | socat STDIO UNIX:command.sock > "$BASE_DIR/$ARCH/wip-vmlinuz.raw"
+
+      {
+        echo "echo __INITRAMFS_BEGIN__"
+        echo "base64 -w0 /target/boot/initramfs-virt"
+        echo "echo"
+        echo "echo __INITRAMFS_END__"
+      } | socat STDIO UNIX:command.sock > "$BASE_DIR/$ARCH/wip-initramfs.raw"
+
+      echo "umount /target" | socat STDIO UNIX:command.sock
+
+      # Extract the base64 payloads from the raw socat capture. Each blob is
+      # the line between the BEGIN and END sentinels.
+      awk '/^__VMLINUZ_BEGIN__/{f=1;next} /^__VMLINUZ_END__/{f=0} f' \
+        "$BASE_DIR/$ARCH/wip-vmlinuz.raw" \
+        | base64 -d > "$BASE_DIR/$ARCH/wip-vmlinuz-virt"
+      awk '/^__INITRAMFS_BEGIN__/{f=1;next} /^__INITRAMFS_END__/{f=0} f' \
+        "$BASE_DIR/$ARCH/wip-initramfs.raw" \
+        | base64 -d > "$BASE_DIR/$ARCH/wip-initramfs-virt"
+      rm -f "$BASE_DIR/$ARCH/wip-vmlinuz.raw" "$BASE_DIR/$ARCH/wip-initramfs.raw"
+
+      # Sanity check: kernel and initramfs should be non-trivial in size.
+      vsz=$(wc -c < "$BASE_DIR/$ARCH/wip-vmlinuz-virt")
+      isz=$(wc -c < "$BASE_DIR/$ARCH/wip-initramfs-virt")
+      if [ "$vsz" -lt 1000000 ] || [ "$isz" -lt 1000000 ]; then
+        stderr "Error: kernel/initramfs extraction produced suspiciously small files (vmlinuz=$vsz, initramfs=$isz)."
+        stderr "       Serial extraction may have failed. Inspect $BASE_DIR/$ARCH/wip-*.raw if rerun."
+        exit 1
+      fi
 
       mv "$BASE_DIR/$ARCH/wip-vmlinuz-virt"   "$BASE_DIR/$ARCH/vmlinuz-virt"
       mv "$BASE_DIR/$ARCH/wip-initramfs-virt" "$BASE_DIR/$ARCH/initramfs-virt"
       chmod -w "$BASE_DIR/$ARCH/vmlinuz-virt" "$BASE_DIR/$ARCH/initramfs-virt"
-
-      stderr "  ..done"
+      stderr "  ..done (vmlinuz=$vsz initramfs=$isz bytes)"
     fi
 ```
 
-The serial-with-base64 approach is intentionally used here (over the wire) because at base-build time we don't have a host port forwarded to the VM's SSH; the QEMU instance was launched in `bootstrap_base_image` with `-nic user,model=virtio-net-pci` (no hostfwd). Base64 over serial is slow (~few seconds for ~50 MB) but it's one-time per arch.
+Why this works:
+- We're still in the live ISO Alpine when extraction runs (no reboot).
+- `/target` is mounted from `/dev/vda3` (installed rootfs).
+- `base64 -w0` emits a single long line; trivial to delimit with sentinels.
+- The base64 payload reaches the host via the serial Unix socket; we strip everything except the payload lines.
 
-If serial proves too unreliable for binary payloads, an alternative is to add a hostfwd to the QEMU launch and use `ssh-copy-id`-installed SSH keys + scp. The current design treats base-build as best-effort and re-runnable, so try serial first.
+If `base64 -w0` is unavailable in the live ISO Alpine's busybox (it's usually present, but worth checking), the fallback is `base64 | tr -d '\n'` — also single line. Adjust the script if the first run produces empty wip-*.raw files.
 
 - [ ] **Step 3: Manual smoke**
 
