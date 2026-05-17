@@ -516,32 +516,71 @@ stderr() {
   echo "$@" >&2
 }
 
-aq_new() {
-  forwards=()
-  local from_snapshot=""
-  local count=1
+# Parse `aq new` arguments. Sets module-level variables that aq_new reads:
+#   FORWARDS (array), FROM_SNAPSHOT, COUNT, NEW_SIZE, SKIP_FAST_BOOT, VM_NAME
+# VM_NAME is the first positional argument (single-VM name OR prefix for
+# --count path); empty if not provided.
+# Validates and exits on error.
+parse_new_args() {
+  FORWARDS=()
+  FROM_SNAPSHOT=""
+  COUNT=1
+  NEW_SIZE="2"
+  SKIP_FAST_BOOT=0
+  VM_NAME=""
+
   while [ $# -gt 0 ]; do
     case "$1" in
       -p)
-        forwards+=("$2"); shift; shift
+        FORWARDS+=("$2"); shift; shift
         ;;
       --from-snapshot=*)
-        from_snapshot="${1#--from-snapshot=}"; shift
+        FROM_SNAPSHOT="${1#--from-snapshot=}"; shift
         ;;
       --from-snapshot)
-        from_snapshot="$2"; shift; shift
+        FROM_SNAPSHOT="$2"; shift; shift
         ;;
       --count=*)
-        count="${1#--count=}"; shift
+        COUNT="${1#--count=}"; shift
         ;;
       --count)
-        count="$2"; shift; shift
+        COUNT="$2"; shift; shift
+        ;;
+      --size=*)
+        NEW_SIZE=$(parse_size_arg "${1#--size=}") || exit 1
+        shift
+        ;;
+      --size)
+        NEW_SIZE=$(parse_size_arg "$2") || exit 1
+        shift; shift
+        ;;
+      --skip-fast-boot)
+        SKIP_FAST_BOOT=1; shift
         ;;
       *)
         break
         ;;
     esac
   done
+
+  if [ $# -gt 0 ]; then
+    VM_NAME="$1"
+    shift
+  fi
+  if [ $# -gt 0 ]; then
+    stderr "Error: unexpected extra arguments: $*"; exit 1
+  fi
+}
+
+aq_new() {
+  parse_new_args "$@"
+  # parse_new_args populates FORWARDS, FROM_SNAPSHOT, COUNT, NEW_SIZE,
+  # SKIP_FAST_BOOT, VM_NAME. Mirror to locals expected by the rest of aq_new
+  # and by _aq_new_one (kept for now to minimise the diff; locals named in the
+  # original style so the rest of the file reads unchanged).
+  forwards=("${FORWARDS[@]:-}")
+  local from_snapshot="$FROM_SNAPSHOT"
+  local count="$COUNT"
 
   if ! [ "$count" -ge 1 ] 2>/dev/null; then
     stderr 'Error: --count must be a positive integer.'; exit 1
@@ -555,9 +594,7 @@ aq_new() {
 
   # Single-VM path.
   if [ "$count" -eq 1 ]; then
-    if [ $# -gt 0 ]; then
-      VM_NAME=$1
-    else
+    if [ -z "$VM_NAME" ]; then
       VM_NAME=$(random_vm_name)
     fi
     _aq_new_one "$from_snapshot" "$VM_NAME"
@@ -568,8 +605,8 @@ aq_new() {
 
   # Counted path: <prefix>-0 .. <prefix>-(N-1).
   local prefix
-  if [ $# -gt 0 ]; then
-    prefix=$1
+  if [ -n "$VM_NAME" ]; then
+    prefix="$VM_NAME"
   else
     prefix="shard-$$"
   fi
