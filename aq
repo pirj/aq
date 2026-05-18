@@ -271,7 +271,7 @@ resolve_tag() {
 
 # Atomically write meta.json. Args: <tag> <parent> <source_vm>.
 write_meta() {
-  local tag=$1 parent=$2 source_vm=$3 has_memory=${4:-false} base_image=${5:-unknown}
+  local tag=$1 parent=$2 source_vm=$3 has_memory=${4:-false} base_image=${5:-unknown} boot_mode=${6:-unknown}
   local dir
   dir=$(snapshot_path "$tag")
   local now
@@ -284,6 +284,7 @@ write_meta() {
   printf '  "created": "%s",\n'     "$now"                   >> "$dir/meta.json.tmp"
   printf '  "last_used": "%s",\n'   "$now"                   >> "$dir/meta.json.tmp"
   printf '  "source_vm": "%s",\n'   "$source_vm"             >> "$dir/meta.json.tmp"
+  printf '  "boot_mode": "%s",\n'   "$boot_mode"             >> "$dir/meta.json.tmp"
   printf '  "has_memory": %s\n'     "$has_memory"            >> "$dir/meta.json.tmp"
   printf '}\n'                                               >> "$dir/meta.json.tmp"
   mv "$dir/meta.json.tmp" "$dir/meta.json"
@@ -700,6 +701,28 @@ _aq_new_one() {
     backing_file="$(snapshot_path "$resolved")/disk.qcow2"
     backing_fmt=qcow2
     [ -f "$backing_file" ] || { stderr "Error: snapshot disk not found: $backing_file"; exit 1; }
+
+    # Boot-mode compatibility check for live snapshots. Memory state is
+    # tied to the kernel that produced it. Cold snapshots (no memory) work
+    # under either boot mode.
+    local snap_has_memory snap_boot_mode current_mode
+    snap_has_memory=$(read_meta "$resolved" has_memory 2>/dev/null || echo false)
+    snap_boot_mode=$(read_meta "$resolved" boot_mode 2>/dev/null || echo unknown)
+    current_mode=direct
+    [ "${SKIP_FAST_BOOT:-0}" = "1" ] && current_mode=uefi
+    if [ "$snap_has_memory" = "true" ] \
+       && [ "$snap_boot_mode" != "unknown" ] \
+       && [ "$snap_boot_mode" != "$current_mode" ]; then
+      stderr "Error: live snapshot '$resolved' was taken under boot_mode=$snap_boot_mode."
+      stderr "       You are creating a VM under boot_mode=$current_mode."
+      stderr "       Memory state is incompatible across boot modes."
+      if [ "$snap_boot_mode" = "uefi" ]; then
+        stderr "       Add --skip-fast-boot to match, or take a fresh cold snapshot."
+      else
+        stderr "       Drop --skip-fast-boot to match, or take a fresh cold snapshot."
+      fi
+      exit 1
+    fi
   else
     ensure_base_image "${NEW_SIZE:-2}"
     backing_file="$BASE_DIR/$ARCH/$(alpine_base_for_size "${NEW_SIZE:-2}")"
@@ -1343,7 +1366,15 @@ aq_snapshot_create() {
     cp "$source_disk" "$snap_dir/disk.qcow2"
   fi
 
-  write_meta "$tag" "$parent" "$vm_name" "$has_memory" "$base_image_name"
+  # Read the source VM's boot mode so the snapshot records compatibility.
+  local snap_boot_mode="unknown"
+  if [ -f "$BASE_DIR/$vm_name/.boot_mode_direct" ]; then
+    snap_boot_mode=direct
+  elif [ -f "$BASE_DIR/$vm_name/.boot_mode_uefi" ]; then
+    snap_boot_mode=uefi
+  fi
+
+  write_meta "$tag" "$parent" "$vm_name" "$has_memory" "$base_image_name" "$snap_boot_mode"
 
   if [ "$has_memory" = true ]; then
     stderr "Snapshot created: $tag (parent: $parent, with memory)"
