@@ -36,9 +36,9 @@ Flat backlog across all 2.x releases. Items group by theme, not by version — r
 
 ### UX polish
 
-- [ ] remove excessive output around `aq console`/`aq exec`; also first-boot waiter dots
-- [ ] add error when `aq console`/`aq exec` is run against a stopped VM
-- [ ] detect occupied host ports during random port allocation
+- [x] remove excessive output around `aq console`/`aq exec`; also first-boot waiter dots — v2.5.1 quietened the warm-boot SSH wait (`aq start` prints just `Started <vm>` on the fast path). First-boot dots already gone for v2.4.0+ VMs (no marker).
+- [x] add error when `aq console`/`aq exec` is run against a stopped VM — v2.5.1 (also covers `aq scp`).
+- [x] detect occupied host ports during random port allocation — v2.5.1 (`random_port` retries with `nc -z -w 1`).
 - [ ] bash completions (subcommands + VM names from `$BASE_DIR`)
 - [ ] add a doc section on troubleshooting (socat patterns, stuck VM diagnostics):
   - `socat STDIO UNIX:command.sock`

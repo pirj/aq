@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.0
+VERSION=2.5.1
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -869,9 +869,23 @@ hostfwd_directive() {
   echo hostfwd=::$HOST_PORT-:$GUEST_PORT
 }
 
-# Generate a random high port number for temporary SSH forwarding
+# Generate a random high port number for temporary SSH forwarding.
+# Retries up to 20 times to avoid handing back a port that's already in use
+# on the host (QEMU's hostfwd binds to 127.0.0.1 and silently fails on
+# clashes). Uses `nc -z -w 1` since it's BSD/openbsd-portable; if nc
+# connects, something is already listening on 127.0.0.1:<port>.
 random_port() {
-  shuf -i 49152-65535 -n 1
+  local attempt=0 port
+  while [ $attempt -lt 20 ]; do
+    port=$(shuf -i 49152-65535 -n 1)
+    if ! nc -z -w 1 127.0.0.1 "$port" 2>/dev/null; then
+      echo "$port"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+  done
+  stderr "Error: failed to find a free random port after 20 attempts."
+  return 1
 }
 
 # Get or generate a persistent SSH port for a VM
@@ -1044,23 +1058,29 @@ FIRST
 }
 
 # Poll SSH until the guest accepts a connection (or time out).
+# Quiet on the warm-boot fast path: only narrates the wait once SSH hasn't
+# come up within ~10s, so a successful start prints just "Started $vm".
 wait_for_ssh() {
   local vm_name=$1
   local max_attempts=${2:-90}
   local attempt=0
+  local notified=0
   local ssh_port
   ssh_port=$(get_vm_ssh_details "$vm_name")
-  stderr "Waiting for SSH on $vm_name (port $ssh_port)..."
   while [ $attempt -lt $max_attempts ]; do
     if ssh -o StrictHostKeyChecking=no \
            -o UserKnownHostsFile=/dev/null \
            -o ConnectTimeout=2 \
            -o LogLevel=ERROR \
            -p "$ssh_port" root@localhost true 2>/dev/null; then
-      stderr "SSH ready on $vm_name after $attempt attempts."
+      [ "$notified" = 1 ] && stderr "SSH ready on $vm_name after $attempt attempts."
       return 0
     fi
     attempt=$((attempt + 1))
+    if [ "$notified" = 0 ] && [ $attempt -ge 5 ]; then
+      stderr "Waiting for SSH on $vm_name (port $ssh_port)..."
+      notified=1
+    fi
     # Periodic heartbeat every 10 attempts so CI logs show progress.
     [ $((attempt % 10)) = 0 ] && stderr "  ...still waiting for SSH ($attempt/$max_attempts)"
     sleep 2
@@ -1235,6 +1255,10 @@ aq_console() {
   VM_NAME=${1:-}
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq console <vm-name>`.' && exit 1
   ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
+  if ! is_vm_running "$VM_NAME"; then
+    stderr "Error: VM '$VM_NAME' is not running. Start it with: aq start $VM_NAME"
+    exit 1
+  fi
   wait_for_first_boot "$VM_NAME"
 
   vm_ssh "$VM_NAME"
@@ -1267,6 +1291,10 @@ aq_exec() {
   VM_NAME=${1:-}
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name>`.' && exit 1
   ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
+  if ! is_vm_running "$VM_NAME"; then
+    stderr "Error: VM '$VM_NAME' is not running. Start it with: aq start $VM_NAME"
+    exit 1
+  fi
   wait_for_first_boot "$VM_NAME"
   shift
 
@@ -1377,6 +1405,10 @@ aq_scp() {
 
   # Check if VM exists
   ! vm_exists "$vm_name" && stderr "Error: VM '$vm_name' does not exist." && exit 1
+  if ! is_vm_running "$vm_name"; then
+    stderr "Error: VM '$vm_name' is not running. Start it with: aq start $vm_name"
+    exit 1
+  fi
 
   # Convert VM paths to use localhost with SSH port
   local scp_sources=()

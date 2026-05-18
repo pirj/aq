@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.1 "Polish" 2026-05-19
+
+### UX
+
+- **`aq console` / `aq exec` / `aq scp` against a stopped VM** now fails fast with `Error: VM '<name>' is not running. Start it with: aq start <name>` instead of hanging on a refused SSH connect.
+- **Quieter warm-boot path.** `aq start`'s SSH waiter no longer prints `Waiting for SSH...` / `SSH ready after N attempts.` when the guest comes up in the typical ~1-3 attempts. Slow boots still get the "Waiting for SSH..." narration after ~10 s plus the existing heartbeat every 20 s.
+- **Random port collision detection.** `random_port` now retries (up to 20 times) and uses `nc -z -w 1 127.0.0.1 <port>` to avoid handing back a port already in use on the host. Affects `get_persistent_ssh_port` and the base-build kernel-extract port. Previously a clash silently broke `aq start` (QEMU's hostfwd bind would fail).
+- **Drop stale "Batch" codename** from `aq --version`. Codename churns per release (Bolt, RAM, Polish, ...); printing only the version number is more honest than embedding the wrong one.
+
 ## 2.5.0 "RAM" 2026-05-19
 
 ### New Features
