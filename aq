@@ -747,14 +747,12 @@ _aq_new_one() {
       touch .boot_mode_direct
     fi
 
-    if [ -z "$from_snapshot" ] && [ "${SKIP_FAST_BOOT:-0}" = "1" ]; then
-      # Legacy UEFI path: base ships with a small partition, so a fresh
-      # base-backed VM still needs sfdisk + resize2fs on first boot.
-      touch .needs_first_boot_setup
-    fi
-    # Direct kernel boot path: size-N base is pre-partitioned at full size,
-    # no first-boot setup needed.
-    # Snapshot-derived VMs already contain a provisioned rootfs; skip first_boot_setup.
+    # No .needs_first_boot_setup marker: size-N bases (used by both direct
+    # and legacy UEFI paths since Phase 2) are pre-partitioned at full N,
+    # so sfdisk + resize2fs at first boot would be a no-op. The
+    # first_boot_setup function stays defined for backwards-compat with VMs
+    # that still carry the marker from before Phase 2 — but we don't create
+    # new VMs with it.
   )
 
   if [ -n "$from_snapshot" ]; then
