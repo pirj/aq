@@ -381,6 +381,16 @@ bootstrap_base_image() {
   local size="$1"
   local fname; fname=$(alpine_base_for_size "$size")
   download_alpine_iso
+
+  # Decide whether kernel/initramfs extraction is needed this run. If yes,
+  # reserve a host port forwarded into the guest for a one-shot HTTP fetch.
+  local need_extract=0
+  local extract_port=""
+  if [ ! -f "$BASE_DIR/$ARCH/vmlinuz-virt" ] || [ ! -f "$BASE_DIR/$ARCH/initramfs-virt" ]; then
+    need_extract=1
+    extract_port=$(random_port)
+  fi
+
   (
     mkdir -p $BASE_DIR/$ARCH
     cd $BASE_DIR/$ARCH
@@ -393,13 +403,16 @@ bootstrap_base_image() {
 
     ensure_uefi_vars $BASE_DIR/$ARCH
 
+    local nic_args="user,model=virtio-net-pci"
+    [ "$need_extract" = "1" ] && nic_args="$nic_args,hostfwd=tcp::$extract_port-:8080"
+
     $QEMU_BIN \
       -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m 1G \
       -drive file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0 \
       $(uefi_vars_args $BASE_DIR/$ARCH) \
       -drive if=virtio,file="$BASE_DIR/$ARCH/wip-$fname",format=raw,cache=none \
       -boot order=cd -cdrom $BASE_DIR/$ARCH/$LATEST_ALPINE_ISO \
-      -nic user,model=virtio-net-pci \
+      -nic $nic_args \
       -rtc base=utc,clock=host \
       -serial unix:$BASE_DIR/$ARCH/command.sock,server=on,wait=off,nodelay=on \
       -mon chardev=mon0,mode=readline -chardev socket,id=mon0,path=$BASE_DIR/$ARCH/control.sock,server=on,wait=off \
@@ -500,8 +513,49 @@ SETUP_CONF_END
     # enough for them to land before we poweroff. If they don't land, the
     # only consequence is a stale /root/setup.conf inside the installed VM —
     # cosmetic, not a functional problem.
-    echo "mkdir -p /target; mount /dev/vda3 /target; rm -f /target/root/setup.conf; umount /target" | socat STDIO UNIX:command.sock
-    sleep 2
+    if [ "$need_extract" = "0" ]; then
+      # Kernel files already cached for this arch — just clean up setup.conf
+      # and unmount (matches the pre-extraction behaviour).
+      echo "mkdir -p /target; mount /dev/vda3 /target; rm -f /target/root/setup.conf; umount /target" | socat STDIO UNIX:command.sock
+      sleep 2
+    else
+      stderr "Extracting kernel + initramfs (one-time per arch, ~10 s)..."
+
+      # Mount the installed rootfs, clean up setup.conf, install busybox-extras
+      # (which carries httpd; the live ISO's busybox doesn't have it), and
+      # start a one-shot HTTP server serving /target/boot. We avoid capturing
+      # output over the noisy serial channel; the host pulls the files via
+      # the hostfwd port forwarded into the VM.
+      echo "mkdir -p /target && mount /dev/vda3 /target && rm -f /target/root/setup.conf && apk add --quiet busybox-extras && busybox-extras httpd -p 8080 -h /target/boot" \
+        | socat STDIO UNIX:command.sock
+      sleep 5
+
+      # Pull kernel + initramfs via the forwarded port. --fail makes curl
+      # exit non-zero on 4xx/5xx; --retry handles slow httpd startup.
+      curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-connrefused \
+        "http://127.0.0.1:$extract_port/vmlinuz-virt" \
+        > "$BASE_DIR/$ARCH/wip-vmlinuz-virt"
+      curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-connrefused \
+        "http://127.0.0.1:$extract_port/initramfs-virt" \
+        > "$BASE_DIR/$ARCH/wip-initramfs-virt"
+
+      echo "killall httpd 2>/dev/null; umount /target" | socat STDIO UNIX:command.sock
+      sleep 1
+
+      # Sanity check: kernel + initramfs should be non-trivial in size.
+      vsz=$(wc -c < "$BASE_DIR/$ARCH/wip-vmlinuz-virt")
+      isz=$(wc -c < "$BASE_DIR/$ARCH/wip-initramfs-virt")
+      if [ "$vsz" -lt 1000000 ] || [ "$isz" -lt 1000000 ]; then
+        stderr "Error: kernel/initramfs extraction produced suspiciously small files (vmlinuz=$vsz, initramfs=$isz)."
+        stderr "       HTTP extraction may have failed (httpd unreachable, file paths different)."
+        exit 1
+      fi
+
+      mv "$BASE_DIR/$ARCH/wip-vmlinuz-virt"   "$BASE_DIR/$ARCH/vmlinuz-virt"
+      mv "$BASE_DIR/$ARCH/wip-initramfs-virt" "$BASE_DIR/$ARCH/initramfs-virt"
+      chmod -w "$BASE_DIR/$ARCH/vmlinuz-virt" "$BASE_DIR/$ARCH/initramfs-virt"
+      stderr "  ..done (vmlinuz=$vsz initramfs=$isz bytes)"
+    fi
 
     echo poweroff | socat STDIO UNIX:command.sock
 
