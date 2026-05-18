@@ -30,40 +30,67 @@
 - [x] reduce boot time, 12s now (target was 2s) — direct kernel boot in v2.4.0 "Bolt" got `aq start` of a fresh VM to ~6.3s on macOS HVF. Sub-3s remains a stretch target; see "Sub-3s warm boot" below.
 - [x] snapshots — cold (v2.2.0), live with memory (v2.2.0), fan-out (v2.3.0), boot_mode-aware live restore (v2.4.0)
 
-### Still relevant in 1.x
+## Pending
 
-- [ ] remove excessive output around aq console/exec; also the rest like first boot etc
-- [ ] replace /etc/motd that suggests to set up the system
-- [-] add --nowait option to "aq start" to skip waiting for system boot — IRRELEVANT: Use background jobs (&) and the wait command instead
-- [-] add a special interim status "Booting" to aq_ls — meh, doesn't make sense to add a feature just for the sake of adding it
-- [ ] check what happens to nc -U / tio when uncommenting getty for serial in /etc/inittab. Is it ttyS0 or ttyAMA0 ?
+Flat backlog across all 2.x releases. Items group by theme, not by version — releases happen in small batches as related items land.
+
+### UX polish
+
+- [ ] remove excessive output around `aq console`/`aq exec`; also first-boot waiter dots
+- [ ] add error when `aq console`/`aq exec` is run against a stopped VM
+- [ ] detect occupied host ports during random port allocation
+- [ ] bash completions (subcommands + VM names from `$BASE_DIR`)
+- [ ] add a doc section on troubleshooting (socat patterns, stuck VM diagnostics):
+  - `socat STDIO UNIX:command.sock`
+  - `UNIX:command.sock PTY,link=command.pty & && SOCAT_PID=$! && tio command.pty`
+
+### Guest base cleanup
+
+These all apply to the bootstrapped per-size base image. They are cosmetic; existing cached bases keep their current state until rebuilt.
+
+- [ ] replace `/etc/motd` (default Alpine motd still suggests running `setup-alpine`)
+- [ ] clean up shell history — `rm ~/.ash_history` at the end of base build
+- [-] check what happens to nc -U / tio when uncommenting getty for serial in /etc/inittab — IRRELEVANT: `aq console` switched from serial to SSH long ago (see DECISIONS); getty on serial isn't on any code path.
+- [x] remove `setup.conf` for real — `rm -f /target/root/setup.conf` runs during base bootstrap (v2.4.0 kernel-extract path).
+- [-] also use ext4 for the base's bootfs — IRRELEVANT: direct kernel boot (v2.4.0 default) doesn't mount `/boot` as a separate fs; legacy UEFI path is a fallback only.
+
+### Distribution
+
+- [ ] formula/tap. dependencies: tio! socat! qemu! zstd (image compression)?
+
+### Configuration
+
+- [ ] allow the user to select the SSH key to use
+- [ ] `.config/aq.toml` for configuring the SSH key?
+- [ ] fwd options: tcp/udp, hostaddr, guestaddr
+
+### QEMU tuning (questions)
+
+- [?] `aio=native/io_uring` — latter won't work, as it's Linux-only; what's the deal with native?
+- [?] `use cache=none` for normal runs, too?
+- [?] adjust SMP — currently uses the default. is this fine for most cases?
+- [ ] further improve images performance `cluster_size=64k,compression_type=zstd`
+
+### Stability & testing
+
 - [ ] stability improvements. sometimes fails on bootstrap
         alpine:~# > DISKOPTS="-m sys /dev/vda"
         -sh: can't create DISKOPTS=-m sys /dev/vda: nonexistent directory
         alpine:~#
       takes a while for vm to start and aq console <vm> fails until then
-- [ ] detect occupied host ports during random port allocation
-- [ ] alpemu.dev — starts with full-screen terminal, basic commands to start a machine, run something on it, and then more terminals spawn and like a few dozen. on scroll
-- [ ] formula/tap. dependencies: tio! socat! qemu! zstd (image compression)?
 - [ ] autotests — partial: `tests/` has smoke + snapshots + live-snapshots + fanout + direct-kernel-boot + size-base-catalog + skip-fast-boot + unit-helpers. CI runs them on GH; deeper coverage (snapshot prune, error paths, fanout edge cases) still missing.
-- [ ] add error when console/exec stopped instance
-- [ ] remove setup.conf for real
-- [ ] clean up shell history - rm ~/.ash_history
-- [ ] also use ext4 for the base's bootfs
-- [ ] use cache=none for normal runs, too?
-- [ ] further improve images performance cluster_size=64k,compression_type=zstd
+
+### Comparative & marketing
+
+- [ ] alpemu.dev — starts with full-screen terminal, basic commands to start a machine, run something on it, and then more terminals spawn and like a few dozen. on scroll
 - [ ] can be used as a backend for containers.dev? https://github.com/microsoft/vscode-remote-try-rust/blob/main/.devcontainer/devcontainer.json
 - [ ] benchmarks/feature rundown vs Docker/Macpine/OrbStack/Podman/Virsh
   - [ ] https://github.com/panubo/docker-sshd Directly compare size, performance, isolation, configurability, reproducibility, horizontal scalability (more same machines), sharing data, startup time. Features: snapshots, overlays. Docker is an app container. aq is a system container
-- [ ] bash completions
-- [ ] add a doc section on troubleshooting: e.g.
-  - socat STDIO UNIX:command.sock
-  - UNIX:command.sock PTY,link=command.pty & && SOCAT_PID=$! && tio command.pty
-- [ ] allow the user to select the SSH key to use
-- [ ] .config/aq.toml for configuring the SSH key?
-- [?] aio=native/io_uring - latter won't work, as it's Linux-only, what's the deal with native?
-- [ ] fwd options: tcp/udp, hostaddr, guestaddr
-- [?] adjust SMP - currently uses the default. is this fine for most cases?
+
+### Already declined
+
+- [-] add `--nowait` option to `aq start` — Use background jobs (`&`) and the `wait` command instead.
+- [-] add a special interim status "Booting" to `aq_ls` — doesn't justify the complexity.
 
 ### Deferred from spec reviews
 
@@ -73,7 +100,7 @@ Items pulled out of "Out of scope" sections in design docs so they don't slip th
 
 Both prerequisites for `kind = "live"` snapshots being useful for Docker / heavy workloads. Tracked from `rlock/docs/superpowers/specs/2026-05-18-snapshot-kind-design.md`.
 
-- [ ] **`aq new --memory=NG`** — parallel to `--size=NG`. Per-VM choice at start time, not per-base. Distributions explicitly choose RAM (rlock's snapshot framework refuses live save without a pinned size). Live-snapshot `meta.json` records `ram_size_mb`; restore refuses on mismatch.
+- [x] **`aq new --memory=NG`** — shipped in v2.5.0 "RAM". `--memory=NG` parallel to `--size=NG`, live-snapshot `meta.json` records `ram_size_mb`, `aq new --from-snapshot=<live-tag>` auto-fills `--memory` from the snapshot or refuses on mismatch.
 - [ ] **Memory hotplug for grow-after-restore.** Today's live snapshot binds the captured RAM size — restoring under a different `-m` fails in QEMU migration. To allow growing post-restore (without rebuild):
     - Source VM launched with `-m 1G,maxmem=8G,slots=4` (reserve headroom at start).
     - After `aq new --from-snapshot=<tag>` + `aq start`, host calls QMP `device_add memory-backend-ram,id=mem1,size=...` + `device_add pc-dimm,id=dimm1,memdev=mem1`. Guest sees hotplug event, kernel onlines the new pages.

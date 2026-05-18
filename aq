@@ -30,7 +30,7 @@ HELP
 }
 
 aq_version() {
-  stderr aq $VERSION \"Batch\" - QEMU wrapper to run Alpine Linux VMs on MacOS
+  stderr aq $VERSION - QEMU wrapper to run Alpine Linux VMs on macOS and Linux
 }
 
 random_vm_name() {
