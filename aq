@@ -1166,6 +1166,29 @@ aq_console() {
   vm_ssh "$VM_NAME"
 }
 
+emit_disk_full_help() {
+  local vm_name="$1" size="$2"
+  cat >&2 <<EOM
+
+ERROR: VM '$vm_name' is out of disk space (current: ${size}G).
+
+To recreate this VM with more space:
+
+  aq rm $vm_name
+  aq new --size=$((size * 2))G $vm_name     # or 16G, 32G, etc.
+
+If the requested-size base doesn't exist yet, this builds it once
+(~30 s). Every subsequent aq new --size=$((size * 2))G is fast.
+
+Per-VM resize (existing data preserved) is also possible but trickier:
+
+  qemu-img resize $BASE_DIR/$vm_name/storage.qcow2 +${size}G
+  aq exec $vm_name "growpart /dev/vda 3 && resize2fs /dev/vda3"
+  # Requires e2fsprogs-extra + cloud-utils-growpart inside the guest;
+  # they're not preinstalled in the base.
+EOM
+}
+
 aq_exec() {
   VM_NAME=${1:-}
   [ -z "$VM_NAME" ] && stderr 'Error: VM name required: `aq exec <vm-name>`.' && exit 1
@@ -1173,14 +1196,38 @@ aq_exec() {
   wait_for_first_boot "$VM_NAME"
   shift
 
+  # Capture stderr to a temp file so we can scan it for disk-full markers
+  # after the command finishes. Stderr is replayed to the terminal at the
+  # end — not real-time — to keep this compatible with aq's `set -fC`
+  # (noclobber) without resorting to process substitution.
+  local err_log
+  err_log=$(mktemp)
+
+  local rc=0
+  # `>|` overrides the script-level `set -fC` noclobber so we can write
+  # to the mktemp'd file (which already exists).
   if [ $# -gt 0 ]; then # Have command-line arguments - execute them as a command
-    vm_ssh "$VM_NAME" "$@"
+    vm_ssh "$VM_NAME" "$@" 2>| "$err_log" || rc=$?
   elif [ ! -t 0 ]; then # No arguments, have stdin - execute it as a script
-    vm_ssh "$VM_NAME" 'sh -s'
+    vm_ssh "$VM_NAME" 'sh -s' 2>| "$err_log" || rc=$?
   else
     stderr 'Error: No command or stdin provided. Usage: `aq exec <vm-name> [command]` or pipe input.'
+    rm -f "$err_log"
     exit 1
   fi
+
+  # Replay captured stderr to the terminal.
+  [ -s "$err_log" ] && cat "$err_log" >&2
+
+  # Surface the disk-full helper if the command output contains a clear
+  # ENOSPC indicator. Strong-match only, to avoid false positives.
+  if [ "$rc" -ne 0 ] && grep -qE 'No space left on device|EXT4-fs.*ENOSPC' "$err_log" 2>/dev/null; then
+    local vm_size
+    vm_size=$(cat "$BASE_DIR/$VM_NAME/.size" 2>/dev/null || echo 2)
+    emit_disk_full_help "$VM_NAME" "$vm_size"
+  fi
+  rm -f "$err_log"
+  return "$rc"
 }
 
 aq_scp() {
