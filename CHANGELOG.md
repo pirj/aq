@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.5.0 "RAM" 2026-05-19
+
+### New Features
+
+- **`aq new --memory=NG`** — per-VM RAM size, parallel to `--size=NG`. Default is 1G (matches the prior hardcoded value, so existing callers are unaffected). Docker / heavy workloads should pass `--memory=4G` or higher.
+- **Live-snapshot RAM-size pinning.** Snapshots created with memory (live snapshots) now record `ram_size_mb` in `meta.json`. `aq new --from-snapshot=<tag>` reads it and:
+  - Auto-fills `--memory` from the snapshot when the user didn't specify, so `aq new --from-snapshot=warm-4g foo` "just works" without remembering the size.
+  - Refuses `--memory` mismatches with a clear error instead of letting QEMU's `-incoming` migration fail opaquely.
+- **Per-VM `.memory` marker** in `$BASE_DIR/<vm>/`. Read by `aq start` to set QEMU's `-m`. Adds to the existing `.size` / `.boot_mode_*` markers.
+
+### Internal
+
+- `parse_memory_arg` helper alongside `parse_size_arg` (same `NG` integer-suffix grammar).
+- `parse_new_args` gains `--memory=NG` / `--memory NG` (long and equals forms). `NEW_MEMORY` is left empty when the user doesn't pass `--memory`, so `_aq_new_one` can distinguish "default to 1G" from "auto-pick from snapshot".
+- `write_meta` accepts an optional `ram_size_mb` 7th positional, emitted as a JSON number (not string).
+- `read_meta` gains a `ram_size_mb` case for number-valued fields.
+- `aq_start` reads the VM's `.memory` marker and passes `-m ${N}G` to QEMU. VMs from before this release have no marker and fall back to 1G.
+
+### Known limitations
+
+- **No memory hotplug after restore.** Live snapshots bind the captured RAM size; growing memory post-restore would require launching the source VM with `-m N,maxmem=M,slots=K` and using QMP `device_add pc-dimm` after `-incoming`. Tracked in `ROADMAP.md` under "--memory=NG flag and live-snapshot RAM hotplug" as a deferred follow-up.
+- **Snapshots from < v2.5.0** have no `ram_size_mb` field and are treated as size-agnostic. The framework refuses live restores only when the snapshot explicitly records a size that differs from the requested `--memory`.
+- The base-build VM still uses hardcoded `-m 1G`. The `--memory` flag controls user VMs only, not base bootstrapping.
+
 ## 2.4.0 "Bolt" 2026-05-18
 
 ### New Features

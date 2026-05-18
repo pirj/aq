@@ -48,4 +48,25 @@ parse_new_args
 
 pass "parse_new_args"
 
+# parse_memory_arg
+[ "$(parse_memory_arg 4G)" = "4" ]    || fail "parse_memory_arg 4G -> 4"
+[ "$(parse_memory_arg 1G)" = "1" ]    || fail "parse_memory_arg 1G -> 1"
+[ "$(parse_memory_arg 16G)" = "16" ]  || fail "parse_memory_arg 16G -> 16"
+parse_memory_arg 4 2>/dev/null        && fail "parse_memory_arg 4 (no suffix) should error"
+parse_memory_arg 4M 2>/dev/null       && fail "parse_memory_arg 4M (wrong unit) should error"
+parse_memory_arg 0G 2>/dev/null       && fail "parse_memory_arg 0G should error"
+pass "parse_memory_arg"
+
+# parse_new_args memory handling
+parse_new_args --memory=4G dummy-vm
+[ "$NEW_MEMORY" = "4" ] || fail "parse_new_args --memory=4G -> NEW_MEMORY=4 (got '$NEW_MEMORY')"
+
+parse_new_args --memory 8G --size=16G big-vm
+[ "$NEW_MEMORY" = "8" ] || fail "parse_new_args --memory 8G -> NEW_MEMORY=8 (got '$NEW_MEMORY')"
+[ "$NEW_SIZE" = "16" ] || fail "parse_new_args --size=16G -> NEW_SIZE=16 (got '$NEW_SIZE')"
+
+parse_new_args
+[ "$NEW_MEMORY" = "" ] || fail "default NEW_MEMORY empty (got '$NEW_MEMORY')"
+pass "parse_new_args memory"
+
 echo "All unit-helpers tests passed."

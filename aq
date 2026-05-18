@@ -129,6 +129,22 @@ parse_size_arg() {
   esac
 }
 
+# Parse a memory argument like "4G" -> "4". Same validation rules as
+# parse_size_arg; kept as a separate function so callers can produce
+# distinct error messages.
+parse_memory_arg() {
+  local arg="$1"
+  case "$arg" in
+    [1-9]G|[1-9][0-9]G|[1-9][0-9][0-9]G)
+      echo "${arg%G}"
+      ;;
+    *)
+      stderr "Error: invalid memory size '$arg'. Expected positive integer followed by G (e.g. 1G, 4G, 8G)."
+      return 1
+      ;;
+  esac
+}
+
 # Compose a size-specific base filename.
 # Usage: compute_base_filename <alpine-version> <arch> <size-int-G>
 compute_base_filename() {
@@ -213,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.4.0
+VERSION=2.5.0
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -271,7 +287,7 @@ resolve_tag() {
 
 # Atomically write meta.json. Args: <tag> <parent> <source_vm>.
 write_meta() {
-  local tag=$1 parent=$2 source_vm=$3 has_memory=${4:-false} base_image=${5:-unknown} boot_mode=${6:-unknown}
+  local tag=$1 parent=$2 source_vm=$3 has_memory=${4:-false} base_image=${5:-unknown} boot_mode=${6:-unknown} ram_size_mb=${7:-}
   local dir
   dir=$(snapshot_path "$tag")
   local now
@@ -285,6 +301,9 @@ write_meta() {
   printf '  "last_used": "%s",\n'   "$now"                   >> "$dir/meta.json.tmp"
   printf '  "source_vm": "%s",\n'   "$source_vm"             >> "$dir/meta.json.tmp"
   printf '  "boot_mode": "%s",\n'   "$boot_mode"             >> "$dir/meta.json.tmp"
+  if [ -n "$ram_size_mb" ]; then
+    printf '  "ram_size_mb": %s,\n' "$ram_size_mb"           >> "$dir/meta.json.tmp"
+  fi
   printf '  "has_memory": %s\n'     "$has_memory"            >> "$dir/meta.json.tmp"
   printf '}\n'                                               >> "$dir/meta.json.tmp"
   mv "$dir/meta.json.tmp" "$dir/meta.json"
@@ -296,11 +315,17 @@ read_meta() {
   local file
   file=$(snapshot_path "$tag")/meta.json
   [ -f "$file" ] || return 1
-  if [ "$field" = "has_memory" ]; then
-    grep -E '"has_memory":' "$file" | sed -E 's/.*"has_memory": (true|false).*/\1/' | head -1
-  else
-    grep -E "\"$field\":" "$file" | sed -E "s/.*\"$field\": \"([^\"]*)\".*/\1/" | head -1
-  fi
+  case "$field" in
+    has_memory)
+      grep -E '"has_memory":' "$file" | sed -E 's/.*"has_memory": (true|false).*/\1/' | head -1
+      ;;
+    ram_size_mb)
+      grep -E '"ram_size_mb":' "$file" | sed -E 's/.*"ram_size_mb": ([0-9]+).*/\1/' | head -1
+      ;;
+    *)
+      grep -E "\"$field\":" "$file" | sed -E "s/.*\"$field\": \"([^\"]*)\".*/\1/" | head -1
+      ;;
+  esac
 }
 
 # Count live dependents of a snapshot by scanning authoritative state:
@@ -589,7 +614,12 @@ stderr() {
 }
 
 # Parse `aq new` arguments. Sets module-level variables that aq_new reads:
-#   FORWARDS (array), FROM_SNAPSHOT, COUNT, NEW_SIZE, SKIP_FAST_BOOT, VM_NAME
+#   FORWARDS (array), FROM_SNAPSHOT, COUNT, NEW_SIZE, NEW_MEMORY,
+#   SKIP_FAST_BOOT, VM_NAME
+# NEW_MEMORY is empty when not specified, so callers can distinguish
+# "user didn't pass --memory" from "user explicitly chose 1G". Empty
+# resolves to the snapshot's recorded ram_size_mb (for live restores) or
+# the default 1G fallback.
 # VM_NAME is the first positional argument (single-VM name OR prefix for
 # --count path); empty if not provided.
 # Validates and exits on error.
@@ -598,6 +628,7 @@ parse_new_args() {
   FROM_SNAPSHOT=""
   COUNT=1
   NEW_SIZE="2"
+  NEW_MEMORY=""
   SKIP_FAST_BOOT=0
   VM_NAME=""
 
@@ -624,6 +655,14 @@ parse_new_args() {
         ;;
       --size)
         NEW_SIZE=$(parse_size_arg "$2") || exit 1
+        shift; shift
+        ;;
+      --memory=*)
+        NEW_MEMORY=$(parse_memory_arg "${1#--memory=}") || exit 1
+        shift
+        ;;
+      --memory)
+        NEW_MEMORY=$(parse_memory_arg "$2") || exit 1
         shift; shift
         ;;
       --skip-fast-boot)
@@ -729,11 +768,34 @@ _aq_new_one() {
       fi
       exit 1
     fi
+
+    # RAM-size pinning for live snapshots. memory.bin was captured at the
+    # source VM's exact -m value; loading it at a different size fails
+    # opaquely in QEMU's migration code. If --memory wasn't passed, pick
+    # up the snapshot's recorded ram_size_mb so it "just works".
+    if [ "$snap_has_memory" = "true" ]; then
+      local snap_ram_mb snap_ram_gb
+      snap_ram_mb=$(read_meta "$resolved" ram_size_mb 2>/dev/null || echo "")
+      if [ -n "$snap_ram_mb" ]; then
+        snap_ram_gb=$((snap_ram_mb / 1024))
+        if [ -z "$NEW_MEMORY" ]; then
+          NEW_MEMORY="$snap_ram_gb"
+        elif [ "$NEW_MEMORY" != "$snap_ram_gb" ]; then
+          stderr "Error: live snapshot '$resolved' was captured at ${snap_ram_gb}G RAM."
+          stderr "       Specified --memory=${NEW_MEMORY}G is incompatible (live snapshots bind RAM size)."
+          stderr "       Drop --memory to auto-match, or take a fresh snapshot at the desired size."
+          exit 1
+        fi
+      fi
+    fi
   else
     ensure_base_image "${NEW_SIZE:-2}"
     backing_file="$BASE_DIR/$ARCH/$(alpine_base_for_size "${NEW_SIZE:-2}")"
     backing_fmt=raw
   fi
+
+  # Default memory fallback (after snapshot logic above had a chance to set it).
+  : "${NEW_MEMORY:=1}"
 
   if [ -d "$BASE_DIR/$vm_name" ]; then
     stderr "Error: VM '$vm_name' already exists."
@@ -770,6 +832,7 @@ _aq_new_one() {
     # Per-VM markers used by aq_start (boot path selection) and the disk-
     # full helper (size lookup).
     echo "${NEW_SIZE:-2}" > .size
+    echo "${NEW_MEMORY:-1}" > .memory
     if [ "${SKIP_FAST_BOOT:-0}" = "1" ]; then
       touch .boot_mode_uefi
     else
@@ -1060,8 +1123,13 @@ aq_start() {
     boot_args+=(-boot order=d)
   fi
 
+  # Read the VM's chosen RAM size. Falls back to 1G for VMs created
+  # before this version of aq (no .memory marker file).
+  local vm_memory_g
+  vm_memory_g=$(cat "$BASE_DIR/$VM_NAME/.memory" 2>/dev/null || echo "1")
+
   $QEMU_BIN \
-    -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m 1G \
+    -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m "${vm_memory_g}G" \
     "${boot_args[@]}" \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
@@ -1427,7 +1495,17 @@ aq_snapshot_create() {
     snap_boot_mode=uefi
   fi
 
-  write_meta "$tag" "$parent" "$vm_name" "$has_memory" "$base_image_name" "$snap_boot_mode"
+  # For live snapshots, record the source VM's RAM size in MB so we can
+  # refuse opaque QEMU migration failures on restore. Pre-snapshot-kind
+  # VMs may lack a .memory marker; fall back to 1G.
+  local snap_ram_size_mb=""
+  if [ "$has_memory" = "true" ]; then
+    local vm_mem_g
+    vm_mem_g=$(cat "$BASE_DIR/$vm_name/.memory" 2>/dev/null || echo "1")
+    snap_ram_size_mb=$((vm_mem_g * 1024))
+  fi
+
+  write_meta "$tag" "$parent" "$vm_name" "$has_memory" "$base_image_name" "$snap_boot_mode" "$snap_ram_size_mb"
 
   if [ "$has_memory" = true ]; then
     stderr "Snapshot created: $tag (parent: $parent, with memory)"
