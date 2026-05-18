@@ -79,12 +79,14 @@ detect_host() {
       MACHINE_OPTS="virt,highmem=on"
       UEFI_CODE="$(brew --prefix qemu 2>/dev/null)/share/qemu/edk2-aarch64-code.fd"
       UEFI_VARS_FLAVOR=sysbus_json
+      CONSOLE=ttyAMA0
       ;;
     Linux)
       HOST_OS=linux
       ARCH=x86_64
       QEMU_BIN=qemu-system-x86_64
       MACHINE_OPTS="q35"
+      CONSOLE=ttyS0
       UEFI_CODE=$(find_ovmf_code) || {
         echo "Error: OVMF firmware not found. Install package 'ovmf'." >&2
         exit 1
@@ -719,7 +721,11 @@ _aq_new_one() {
         echo $forward >> hostfwd.conf
       done
     fi
-    qemu-img create -b "$backing_file" -F "$backing_fmt" -f qcow2 storage.qcow2 2G 1>/dev/null
+    # Overlay size defaults to the backing's virtual size (qemu-img infers
+    # it). For fresh-from-base that's the size-N base; for --from-snapshot
+    # that's the snapshot disk's size. Either way, no resize2fs needed at
+    # first boot.
+    qemu-img create -b "$backing_file" -F "$backing_fmt" -f qcow2 storage.qcow2 1>/dev/null
 
     case "$UEFI_VARS_FLAVOR" in
       sysbus_json)
@@ -732,10 +738,22 @@ _aq_new_one() {
         ;;
     esac
 
-    if [ -z "$from_snapshot" ]; then
-      # Fresh VM from base needs partition resize on first boot.
+    # Per-VM markers used by aq_start (boot path selection) and the disk-
+    # full helper (size lookup).
+    echo "${NEW_SIZE:-2}" > .size
+    if [ "${SKIP_FAST_BOOT:-0}" = "1" ]; then
+      touch .boot_mode_uefi
+    else
+      touch .boot_mode_direct
+    fi
+
+    if [ -z "$from_snapshot" ] && [ "${SKIP_FAST_BOOT:-0}" = "1" ]; then
+      # Legacy UEFI path: base ships with a small partition, so a fresh
+      # base-backed VM still needs sfdisk + resize2fs on first boot.
       touch .needs_first_boot_setup
     fi
+    # Direct kernel boot path: size-N base is pre-partitioned at full size,
+    # no first-boot setup needed.
     # Snapshot-derived VMs already contain a provisioned rootfs; skip first_boot_setup.
   )
 
@@ -991,12 +1009,34 @@ aq_start() {
     incoming_args="-incoming file:$incoming_file"
   fi
 
+  # Boot mode selection: direct kernel boot is the default (post Phase 2);
+  # UEFI is the fallback retained via --skip-fast-boot at aq new time.
+  # Use a bash array so the -append value stays a single argument.
+  local -a boot_args
+  if [ -f "$BASE_DIR/$VM_NAME/.boot_mode_direct" ] \
+     && [ -f "$BASE_DIR/$ARCH/vmlinuz-virt" ] \
+     && [ -f "$BASE_DIR/$ARCH/initramfs-virt" ]; then
+    boot_args=(
+      -kernel "$BASE_DIR/$ARCH/vmlinuz-virt"
+      -initrd "$BASE_DIR/$ARCH/initramfs-virt"
+      -append "console=$CONSOLE root=/dev/vda3 rootfstype=ext4 modules=ext4,virtio-pci rw quiet"
+    )
+  else
+    boot_args=(
+      -drive "file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0"
+    )
+    # uefi_vars_args emits space-separated tokens. Read into the array.
+    local _uefi_args
+    _uefi_args=$(uefi_vars_args "$BASE_DIR/$VM_NAME")
+    # shellcheck disable=SC2206  # intentional word-split
+    boot_args+=($_uefi_args)
+    boot_args+=(-boot order=d)
+  fi
+
   $QEMU_BIN \
     -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m 1G \
-    -drive file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0 \
-    $(uefi_vars_args $BASE_DIR/$VM_NAME) \
+    "${boot_args[@]}" \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
-    -boot order=d \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
     -rtc base=utc,clock=host \
     -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on \
