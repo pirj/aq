@@ -85,6 +85,29 @@
 
 - [?] adjust SMP - currently uses the default. is this fine for most cases?
 
+### --memory=NG flag and live-snapshot RAM hotplug
+
+Two related items, both prerequisites for `kind = "live"` snapshots being
+useful for Docker / heavy workloads (tracked from rlock spec
+`2026-05-18-snapshot-kind-design.md`).
+
+- [ ] **`aq new --memory=NG`** — parallel to `--size=NG`. Per-VM choice
+  at start time, not per-base. Distributions explicitly choose RAM
+  (rlock's snapshot framework refuses live save without a pinned size).
+  Live-snapshot `meta.json` records `ram_size_mb`; restore refuses on
+  mismatch.
+
+- [ ] **Memory hotplug for grow-after-restore.** Today's live snapshot
+  binds the captured RAM size — restoring under a different `-m` fails
+  in QEMU migration. To allow growing post-restore (without rebuild):
+    - Source VM launched with `-m 1G,maxmem=8G,slots=4` (reserve headroom at start).
+    - After `aq new --from-snapshot=<tag>` + `aq start`, host calls QMP `device_add memory-backend-ram,id=mem1,size=...` + `device_add pc-dimm,id=dimm1,memdev=mem1`. Guest sees hotplug event, kernel onlines the new pages.
+    - `meta.json` also records `ram_max_mb` so consumers see headroom.
+    - Surface as `aq new --from-snapshot=... --memory=4G` where the target size is `>= ram_size_mb` AND `<= ram_max_mb` of the snapshot.
+
+  Defer until a `kind = "live"` consumer actually needs it. The framework
+  enforcing same-size match is the safe default.
+
 ### Use cloud images
 
 Mention https://github.com/alpinelinux/alpine-make-vm-image - build images
