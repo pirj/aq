@@ -524,38 +524,44 @@ SETUP_CONF_END
     else
       stderr "Extracting kernel + initramfs (one-time per arch, ~10 s)..."
 
-      # Mount the installed rootfs, clean up setup.conf, install busybox-extras
-      # (which carries httpd; the live ISO's busybox doesn't have it), and
-      # start a one-shot HTTP server serving /target/boot. We avoid capturing
-      # output over the noisy serial channel; the host pulls the files via
-      # the hostfwd port forwarded into the VM.
-      echo "mkdir -p /target && mount /dev/vda3 /target && rm -f /target/root/setup.conf && apk add --quiet busybox-extras && busybox-extras httpd -p 8080 -h /target/boot" \
+      # Mount the installed rootfs, clean up setup.conf, and stream both
+      # kernel and initramfs as a single tar over a netcat listener. This
+      # uses only the live ISO's base busybox (tar + nc) — no apk add
+      # required, no live-ISO repo state assumptions, no foreign packages.
+      #
+      # `nc -l -p PORT` accepts exactly one connection then exits; the
+      # host's `nc localhost PORT` extracts the tar stream.
+      echo "mkdir -p /target && mount /dev/vda3 /target && rm -f /target/root/setup.conf && (cd /target/boot && tar c vmlinuz-virt initramfs-virt | nc -l -p 8080) ; umount /target" \
         | socat STDIO UNIX:command.sock
-      sleep 5
+      sleep 3
 
-      # Pull kernel + initramfs via the forwarded port. --fail makes curl
-      # exit non-zero on 4xx/5xx; --retry handles slow httpd startup.
-      curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-connrefused \
-        "http://127.0.0.1:$extract_port/vmlinuz-virt" \
-        > "$BASE_DIR/$ARCH/wip-vmlinuz-virt"
-      curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-connrefused \
-        "http://127.0.0.1:$extract_port/initramfs-virt" \
-        > "$BASE_DIR/$ARCH/wip-initramfs-virt"
-
-      echo "killall httpd 2>/dev/null; umount /target" | socat STDIO UNIX:command.sock
-      sleep 1
+      # Fetch the tar stream from the hostfwd port. Retry briefly so we
+      # don't race nc starting up inside the guest.
+      mkdir -p "$BASE_DIR/$ARCH/wip-extract"
+      attempt=0
+      while [ $attempt -lt 30 ]; do
+        if nc -w 60 127.0.0.1 "$extract_port" \
+           | tar x -C "$BASE_DIR/$ARCH/wip-extract" 2>/dev/null ; then
+          [ -f "$BASE_DIR/$ARCH/wip-extract/vmlinuz-virt" ] && \
+          [ -f "$BASE_DIR/$ARCH/wip-extract/initramfs-virt" ] && break
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+      done
 
       # Sanity check: kernel + initramfs should be non-trivial in size.
-      vsz=$(wc -c < "$BASE_DIR/$ARCH/wip-vmlinuz-virt")
-      isz=$(wc -c < "$BASE_DIR/$ARCH/wip-initramfs-virt")
+      vsz=$(wc -c < "$BASE_DIR/$ARCH/wip-extract/vmlinuz-virt" 2>/dev/null || echo 0)
+      isz=$(wc -c < "$BASE_DIR/$ARCH/wip-extract/initramfs-virt" 2>/dev/null || echo 0)
       if [ "$vsz" -lt 1000000 ] || [ "$isz" -lt 1000000 ]; then
         stderr "Error: kernel/initramfs extraction produced suspiciously small files (vmlinuz=$vsz, initramfs=$isz)."
-        stderr "       HTTP extraction may have failed (httpd unreachable, file paths different)."
+        stderr "       Tar-over-nc extraction may have failed (nc unreachable, tar contents wrong)."
+        rm -rf "$BASE_DIR/$ARCH/wip-extract"
         exit 1
       fi
 
-      mv "$BASE_DIR/$ARCH/wip-vmlinuz-virt"   "$BASE_DIR/$ARCH/vmlinuz-virt"
-      mv "$BASE_DIR/$ARCH/wip-initramfs-virt" "$BASE_DIR/$ARCH/initramfs-virt"
+      mv "$BASE_DIR/$ARCH/wip-extract/vmlinuz-virt"   "$BASE_DIR/$ARCH/vmlinuz-virt"
+      mv "$BASE_DIR/$ARCH/wip-extract/initramfs-virt" "$BASE_DIR/$ARCH/initramfs-virt"
+      rmdir "$BASE_DIR/$ARCH/wip-extract" 2>/dev/null || rm -rf "$BASE_DIR/$ARCH/wip-extract"
       chmod -w "$BASE_DIR/$ARCH/vmlinuz-virt" "$BASE_DIR/$ARCH/initramfs-virt"
       stderr "  ..done (vmlinuz=$vsz initramfs=$isz bytes)"
     fi
