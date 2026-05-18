@@ -1,6 +1,40 @@
 # Changelog
 
-## Unreleased
+## 2.4.0 "Bolt" 2026-05-18
+
+### New Features
+
+- **Per-size base catalog.** `aq new --size=NG` accepts arbitrary disk sizes; the corresponding `alpine-base-<version>-<arch>-NG.raw` is built on demand the first time a new size is requested, then reused for every subsequent `aq new --size=NG`. Each size's base is independent — adding a larger size does not invalidate caches at smaller sizes. Default `--size=2G` matches the prior effective size, so existing callers are unaffected.
+- **Direct kernel boot** is the new default for `aq new` / `aq start`. The size-N base is pre-partitioned at full size, so `setup-alpine`'s small partition + first-boot `sfdisk` + `resize2fs` round-trip is eliminated. QEMU launches with `-kernel <vmlinuz-virt>` + `-initrd <initramfs-virt>` extracted from the installed Alpine at base-build time; no UEFI bootloader phase, no GRUB. Measured: `aq start` for a fresh VM drops from ~14 s (legacy UEFI + first-boot setup) to ~6 s on Apple M3 with HVF, a ~2.3× speedup. The legacy UEFI path remains available via `aq new --skip-fast-boot`.
+- **`aq new --skip-fast-boot`** flag for opting back into UEFI/edk2 + bootloader chain. Kept for debugging and as a fallback when direct kernel boot has issues.
+- **Snapshot meta.json now records `boot_mode` and `base_image`.** Live snapshots refuse to restore under a different boot mode than the one that captured them — memory state is tied to the kernel. Cold snapshots restore freely.
+- **Actionable disk-full error message.** `aq exec` detects ENOSPC in command output and prints a recreate-with-larger-size path (`aq rm $vm && aq new --size=8G $vm`), with an in-place resize fallback documented.
+
+### Bug Fixes
+
+- Kernel extraction during base build no longer depends on `apk add busybox-extras` in the live ISO. Replaced with plain busybox `tar c | nc -l -p 8080` on the guest side and `nc | tar x` on the host. Works on GH x86_64 runners where the prior `busybox-extras httpd` path failed silently.
+
+### Internal
+
+- `_aq_new_one`'s overlay `qemu-img create` no longer hardcodes 2G; the virtual size now defaults to the backing image's size (pre-partitioned size-N base or snapshot's disk).
+- New per-VM markers in `$BASE_DIR/<vm>/`: `.size` (integer GB), `.boot_mode_direct` or `.boot_mode_uefi`. Used by `aq_start`'s boot-path selection and by the disk-full helper for size lookup.
+- New helpers: `parse_size_arg`, `compute_base_filename`, `alpine_base_for_size`, `emit_disk_full_help`.
+- `aq_new` arg parsing extracted into `parse_new_args` setting `FORWARDS / FROM_SNAPSHOT / COUNT / NEW_SIZE / SKIP_FAST_BOOT / VM_NAME`.
+- Source-only mode via `__AQ_SOURCED_ONLY=1 source ./aq` lets tests exercise pure-logic helpers (`tests/unit-helpers.sh`).
+
+### Tests
+
+- `tests/unit-helpers.sh` (new) — unit coverage for size parsing, filename composition, `parse_new_args`.
+- `tests/direct-kernel-boot.sh` (new) — verifies default-path VM boots via `-kernel`/`-initrd`, no resize2fs in dmesg, `/dev/vda3` is rootfs.
+- `tests/size-base-catalog.sh` (new) — verifies that two VMs at the same `--size=N` share an existing size-N base and both boot.
+- `tests/skip-fast-boot.sh` (new) — verifies legacy UEFI path under `--skip-fast-boot` and marker file placement.
+- `tests/run.sh` wires the new suites alongside `smoke`, `snapshots`, `live-snapshots`, `fanout`.
+
+### Known Limitations
+
+- The first `aq new --size=NG` per new N costs the full Alpine install + kernel extraction (~30–60 s). Every subsequent `aq new --size=NG` is fast. Pre-warming common sizes is a future option.
+- aq guests are still hardcoded to `-m 1G`. Docker workloads commonly need more; a `--memory=NG` flag parallel to `--size` is queued as a follow-up.
+- Live snapshots from before this release have `boot_mode = unknown` and are accepted as cold-snapshot-compatible only; create fresh live snapshots after upgrade.
 
 ## 2.3.1 2026-05-03
 
