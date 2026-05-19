@@ -67,7 +67,10 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 - [-] `aio=native/io_uring` — DECLINED with measurement (see `docs/benchmarks/2026-05-19-aq-start-tuning.md`). Neither beats default `threads`+writeback on warm `aq start`; canonical `aio=io_uring,cache.direct=on` runs ~50 ms slower median. Warm boot is page-cache-dominated, not async-I/O-dominated.
 - [-] `use cache=none` for normal runs, too? — DECLINED with measurement. `cache.direct=on` (== `cache=none` semantics for our reads) costs ~100–200 ms median by bypassing the page cache. Same benchmark doc.
 - [-] adjust SMP — DECLINED with measurement. `-smp 2` is ~300 ms median *slower* than default 1 vCPU because Alpine OpenRC has `rc_parallel=NO`.
-- [ ] further improve images performance `cluster_size=64k,compression_type=zstd` — untested; warm-boot bottleneck isn't disk, but cold builds might benefit.
+
+**Note (not a checklist item): `cluster_size=64k,compression_type=zstd`.** The flag combo from earlier roadmap drafts no longer maps to actionable work. `cluster_size=64k` is already QEMU's default for qcow2 (verified via `qemu-img info` on any aq overlay). `compression_type=zstd` only affects clusters that were *explicitly* compressed (e.g. via `qemu-img convert -c`); normal writes stay uncompressed, so setting it on the overlay is a no-op for aq's workflow.
+
+Where it *would* matter is converting the base from `.raw` to `qcow2` with `-c -o compression_type=zstd` — that cuts the on-disk base size roughly in half at the cost of CPU on every cold cluster read. Per the 2026-05-19 bench warm `aq start` is not disk-bound, so the trade-off is "disk space vs. CPU/cold-read latency" and the answer is workload-dependent (laptop on small SSD: maybe worth it; CI/cold storage: probably not). Document if a user reports a concrete need; not pursuing speculatively.
 
 ### Stability & testing
 
@@ -118,24 +121,27 @@ The Bolt release hit ~6.3s `aq start` (down from ~14s). The spec target was <3s.
 - [ ] **Firecracker / Cloud Hypervisor backend** — decision gate after measuring warm-boot timings; if user demand justifies, evaluate alternative hypervisors. Depot.dev uses Cloud Hypervisor v51 with qcow2 + direct I/O. Out of scope until we measure rlock end-to-end and decide.
 - [ ] **Custom init replacement** (skip OpenRC) — ~1-2s savings, ergonomic risk (no service supervision).
 - [ ] **hugepages, kvm-clock micro-opts** — sub-second incremental wins.
-- [ ] **Caching the host's compiled OVMF firmware** — irrelevant once UEFI is the fallback only.
+- [-] **Caching the host's compiled OVMF firmware** — IRRELEVANT since v2.4.0: UEFI is the `--skip-fast-boot` fallback only; direct kernel boot (the default) doesn't load OVMF at all.
 - [ ] **Migrate to qcow2 base** (depot.dev pattern) — Out of scope; document only if a measured need surfaces. Different format means revisiting the raw-vs-qcow2 latency rationale.
 
 ### Use cloud images
 
-Mention https://github.com/alpinelinux/alpine-make-vm-image - build images
-https://gitlab.alpinelinux.org/alpine/cloud/alpine-cloud-images - build cloud images
- Pre-made arch qcow2 images https://gitlab.archlinux.org/archlinux/arch-boxes - more like tools to make images?
+- [-] **Boot Alpine cloud qcow2 images instead of running `setup-alpine`** — DECLINED post v2.4.0 "Bolt". The motivation in the original draft was to skip Alpine's installer (~15–20 s of the one-time per-size cold base build) by booting a pre-built cloud image and injecting an SSH key via an aq-side IMDS server + `tiny-cloud` in the guest.
 
-Consider https://alpinelinux.org/cloud/ again. how hard is it to build that IMDS metadata server that publishes the root pubkey to allow ssh?
-https://gitlab.alpinelinux.org/alpine/cloud/tiny-cloud - tiny bootstrapper
-> Tiny Cloud is also used for Alpine Linux's experimental "auto-install" feature.
+  Direct kernel boot has since eaten most of the savings cloud images would have unlocked:
 
-! try again to boot a cloud qcow2 image. last time if failed somehow
-! via serial console, create a /usr/lib/tiny-cloud/cloud/*aq*/imds file, and an autodetect, forward a socket to the guest, and extract add code to extract user-data and ssh_authorized_keys from that socket (no http, just yaml, base64 encoded: decode and parse with yx yaml parser)
+  - We already grab `vmlinuz-virt` + `initramfs-virt` directly from the installed base — kernel/initramfs already come from Alpine's stock packages, not from the installer's quirks.
+  - `setup-alpine`'s output is consumed exactly once per *size*, then every subsequent `aq new --size=NG` reuses the cached base in <1 s. The ~20 s win is therefore one-time per size, not per VM.
+  - Adding an IMDS shim + `tiny-cloud` would put a cloud-init-shaped pause on *every* warm boot (~1–2 s observed for tiny-cloud on similar setups), which is a regression on the path that matters most.
+  - Resize ergonomics also clash: cloud images ship at a fixed virtual size, while the per-size catalog (v2.4.0) wants partitioned-at-full-size bases per requested `--size`.
 
-### non-default MAC address
+  Worth revisiting only if someone (a) really cares about the per-size cold first build and (b) is willing to pay 1–2 s on every warm `aq start` to get it. Links kept for the archaeology:
 
-Multiple machines don't clash on the same MAC address
-Might be needed for multiple machines to avoid duplicate MACs
-    -device virtio-net-pci,netdev=net0,mac=56:c9:13:cf:18:a2 \
+    - https://github.com/alpinelinux/alpine-make-vm-image — image builder
+    - https://gitlab.alpinelinux.org/alpine/cloud/alpine-cloud-images — official cloud-image pipeline
+    - https://gitlab.alpinelinux.org/alpine/cloud/tiny-cloud — minimal cloud-init replacement
+    - https://gitlab.archlinux.org/archlinux/arch-boxes — Arch-flavoured equivalent
+
+### Networking
+
+- [-] **non-default MAC address** — IRRELEVANT for the current `-nic user,...` (SLIRP NAT) topology: every VM gets its own isolated user-mode network, so MACs never share a broadcast domain. Would become relevant only if aq grows a bridged/tap-backed mode where multiple VMs share an L2 segment; revisit then.
