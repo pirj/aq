@@ -111,7 +111,17 @@ Pulls in `qemu`, `tio`, `socat`, `coreutils`, `wget`, and `gnupg` from brew. On 
 
 The tap lives at https://github.com/pirj/homebrew-aq.
 
-> ⚠ **macOS Apple Silicon: avoid QEMU 11.0.0 if you plan to use live snapshots.** Stock brew currently ships QEMU `11.0.0`, which has an aarch64-HVF regression that asserts on every incoming migration — so `aq new --from-snapshot=<live-tag>` fails. Cold snapshots, fanout from cold tags, and everything else work fine. Linux KVM is unaffected. Workaround until QEMU `11.1.0` lands in brew: run `tools/qemu-livesave-repro/install-patched-qemu.sh` (builds patched binary into `~/.local/bin`), or downgrade to QEMU `10.x`. Full RCA + recipe in Troubleshooting below.
+> ⚠ **macOS Apple Silicon: avoid QEMU 11.0.0 if you plan to use live snapshots.** Stock brew currently ships QEMU `11.0.0`, which has an aarch64-HVF regression that asserts on every incoming migration — so `aq new --from-snapshot=<live-tag>` fails. Cold snapshots, fanout from cold tags, and everything else work fine. Linux KVM is unaffected.
+>
+> **Easiest workaround**: drop back to QEMU `10.0.3` if it's still in your Cellar (it usually is right after a brew upgrade). Verified: identical aq live-restore performance (~650 ms median on M3) and no assertion.
+>
+> ```sh
+> ls /opt/homebrew/Cellar/qemu                          # confirm 10.0.3 is there
+> export PATH="/opt/homebrew/Cellar/qemu/10.0.3/bin:$PATH"   # add to ~/.zshrc to keep
+> qemu-system-aarch64 --version                         # expect "version 10.0.3"
+> ```
+>
+> If your Cellar only has `11.0.0` (a clean install), the fallback is to build a patched binary via `tools/qemu-livesave-repro/install-patched-qemu.sh`. Full RCA + both recipes in Troubleshooting below.
 
 #### Linux (Debian/Ubuntu) without Homebrew
 
@@ -225,7 +235,20 @@ aq surfaces this as `Error: incoming migration did not complete` plus a hint poi
 
 **Upstream fix**: [`06fd39e426`](https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426) (on `master`, post-v11.0.0) — six lines, removes the HVF pre-allocation. Not yet in any tagged release.
 
-**Workaround until QEMU 11.1.0 ships**:
+**Workaround #1 — downgrade to QEMU 10.0.3** (preferred if you have it):
+
+`brew upgrade` doesn't delete the previous keg, so right after upgrading from QEMU 10.x → 11.0.0 you'll still find the older keg under `/opt/homebrew/Cellar/qemu/10.0.3`. QEMU 10.0.3 doesn't have the assertion (it was added in `v11.0.0-rc0`) and gives identical aq live-restore numbers (~650 ms median on M3, n=3 — within noise of the patched 11.0.0's 645 ms).
+
+```sh
+ls /opt/homebrew/Cellar/qemu                            # need to see 10.0.3 here
+export PATH="/opt/homebrew/Cellar/qemu/10.0.3/bin:$PATH"
+# add the line to ~/.zshrc or ~/.bashrc to keep it across shells
+qemu-system-aarch64 --version                           # expect "version 10.0.3"
+```
+
+PATH override is non-invasive — brew's symlink farm in `/opt/homebrew/bin` still points at 11.0.0, so `brew upgrade qemu` later still works normally. Once QEMU 11.1.0 lands you just drop the override.
+
+**Workaround #2 — build patched 11.0.0** (if your Cellar only has 11.0.0):
 
 aq ships a one-shot installer that builds the patched binary and symlinks it under `~/.local/bin`:
 
@@ -237,7 +260,7 @@ qemu-system-aarch64 --version            # expect "(v11.0.0-1-...)"
 
 The script clones QEMU `v11.0.0`, applies `tools/qemu-livesave-repro/0001-hvf-stop-prealloc-cpreg-vmstate.patch` (the upstream fix exported as a patch), configures with `--target-list=aarch64-softmmu --enable-hvf`, builds, and symlinks. Re-running it is safe — it skips clone/configure/build when the tree already has the expected commit and binary.
 
-Once the patched binary is ahead of brew's on `PATH`, `aq new --from-snapshot=<live-tag>` resumes in ~700 ms — same as Linux KVM.
+Either way, `aq new --from-snapshot=<live-tag>` resumes in ~700 ms — same as Linux KVM.
 
 If you'd rather do it by hand: see `tools/qemu-livesave-repro/README.md` for the step-by-step + the `verify-fix.sh` end-to-end test.
 

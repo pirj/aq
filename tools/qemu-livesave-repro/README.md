@@ -30,7 +30,21 @@ ERROR:target/arm/machine.c:1045:cpu_pre_load:
   conflicts with the assertion added in v11.0.0
   ([`ab2ddc7b66`](https://gitlab.com/qemu-project/qemu/-/commit/ab2ddc7b66)).
 
-## Quick install (one command)
+## First check: do you already have QEMU 10.0.3 around?
+
+`brew upgrade qemu` leaves the previous keg in `/opt/homebrew/Cellar/qemu/` until you run `brew cleanup`. If you upgraded recently, 10.0.3 is probably still there — and it doesn't have the v11.0.0-rc0 assertion at all, so it's a drop-in workaround that needs no build:
+
+```sh
+ls /opt/homebrew/Cellar/qemu             # 10.0.3 listed?
+export PATH="/opt/homebrew/Cellar/qemu/10.0.3/bin:$PATH"
+qemu-system-aarch64 --version            # expect "version 10.0.3"
+```
+
+Verified: aq live-restore on M3 HVF reports median 654 ms (n=3) with 10.0.3, vs 645 ms with patched 11.0.0 — within run-to-run noise.
+
+If you don't have 10.0.3 in Cellar (clean install, or `brew cleanup` already ran), fall through to building the patched 11.0.0 below.
+
+## Build the patched binary (when 10.0.3 isn't available)
 
 ```sh
 bash install-patched-qemu.sh

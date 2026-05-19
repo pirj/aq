@@ -129,7 +129,7 @@ User-facing landing in aq:
 - [x] Min reproduce extracted from aq into a 70-line script that uses pure qemu (no aq, no disk).
 - [x] Verified the regression is QEMU-side, not aq-side (cherry-pick + rebuild fixes it without any aq change).
 - [x] aq surfaces the QEMU 11.0.0 / darwin / aarch64 combination with a hint pointing at the workaround instead of letting the user puzzle through "Incoming migration did not apply after 300 polls".
-- [x] README Troubleshooting documents the cherry-pick + local-build workaround.
+- [x] README Troubleshooting documents two workarounds: (a) PATH-prepend the pre-existing `/opt/homebrew/Cellar/qemu/10.0.3` keg if `brew upgrade` left it around — no build, identical performance (~654 ms median on M3, n=3); (b) build patched v11.0.0 via `install-patched-qemu.sh` if 10.0.3 isn't on the Cellar.
 - [ ] **When QEMU 11.1.0 ships in homebrew-core** (or earlier if `06fd39e426` gets backported to stable-11.0 and a 11.0.x release picks it up):
   - Drop the avoid-11.0 warning from `README.md` (the callout block in Install + the macOS row in "When *not* to use aq" + the Troubleshooting subsection)
   - Remove `tools/qemu-livesave-repro/` entirely (`repro.sh`, `verify-fix.sh`, `install-patched-qemu.sh`, the bundled patch, the README) — pure carrying cost once the fix is in tagged QEMU

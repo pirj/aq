@@ -26,6 +26,28 @@ PATCH_FILE="$SCRIPT_DIR/0001-hvf-stop-prealloc-cpreg-vmstate.patch"
 [ "$(uname -m)" = arm64 ]  || { echo "This script targets Apple Silicon (arm64)." >&2; exit 1; }
 [ -f "$PATCH_FILE" ] || { echo "Patch file not found at $PATCH_FILE" >&2; exit 1; }
 
+# Short-circuit hint: building qemu from source takes ~10 minutes, but
+# `brew upgrade qemu` typically leaves the previous keg in place — if
+# a working pre-11.0.0 version is already on the Cellar, PATH-overriding
+# it is instant and gives identical live-restore performance.
+existing_old_keg=$(ls -1d /opt/homebrew/Cellar/qemu/10.* 2>/dev/null | sort -V | tail -1)
+if [ -n "$existing_old_keg" ] && [ "${SKIP_KEG_HINT:-0}" != "1" ]; then
+  cat >&2 <<HINT
+==> Notice: $existing_old_keg already on this machine.
+    QEMU 10.x doesn't have the v11.0.0-rc0 assertion at all — it's
+    a no-build workaround if you don't need any of the 11.0.0 features.
+    To use it instead of building from source:
+
+        export PATH="$existing_old_keg/bin:\$PATH"
+        # add to ~/.zshrc / ~/.bashrc to keep across shells
+        qemu-system-aarch64 --version    # expect "version $(basename $existing_old_keg)"
+
+    Re-run this script with SKIP_KEG_HINT=1 to skip this hint and build
+    the patched 11.0.0 anyway. Continuing in 5 s...
+HINT
+  sleep 5
+fi
+
 mkdir -p "$BIN_DIR"
 
 # Ensure build deps. Brew is idempotent on already-installed kegs.
