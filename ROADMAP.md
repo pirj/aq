@@ -115,7 +115,7 @@ Linux KVM x86_64 is unaffected — different cpreg lifecycle.
 
 The HVF Apple-Silicon path pre-allocates exactly the same field the new assert says must be NULL — so every aarch64 HVF live restore on QEMU 11.0.0 trips the assertion. Linux KVM doesn't pre-allocate (only `cpu_pre_save` would, and the destination doesn't run that), so KVM is fine.
 
-**Upstream fix**: [`06fd39e426`](https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426) `target/arm/hvf: Stop pre-allocating cpreg_vmstate arrays`, Scott J. Goldman, April 2026. Six lines, removes the HVF pre-allocation so the assert holds. On `master`; **no tagged release contains it yet** (latest tag is `v11.0.0`).
+**Upstream fix**: [`06fd39e426`](https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426) `target/arm/hvf: Stop pre-allocating cpreg_vmstate arrays`, Scott J. Goldman, April 2026. Six lines, removes the HVF pre-allocation so the assert holds. On `master` only — **`stable-11.0` hasn't picked it up**, so a hypothetical 11.0.1 cut today would still ship the bug. Naturally lands in QEMU 11.1.0; an email to `qemu-stable@nongnu.org` could expedite a stable-11.0 backport.
 
 **Verified locally on M3 HVF**:
 

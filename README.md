@@ -250,7 +250,7 @@ aq surfaces this as `Error: incoming migration did not complete` plus a hint poi
 
 The aq project's own bench measures **645 ms median live-restore** on M3 HVF with the patched QEMU — matching the Linux KVM number, confirming the fix unblocks the macOS path entirely.
 
-Once QEMU 11.0.1+ lands in homebrew-core, this section becomes a footnote.
+Stable-branch status as of writing: the fix is on `master` only; `stable-11.0` hasn't picked it up, so a hypothetical 11.0.1 cut from `stable-11.0` would still have the bug. Naturally lands in **QEMU 11.1.0**. If you want it backported sooner, email `qemu-stable@nongnu.org` requesting `06fd39e426` for stable-11.0.
 
 ### Linux: `aq start` errors with "KVM is required"
 
