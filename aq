@@ -1135,10 +1135,15 @@ aq_start() {
   if [ -f "$BASE_DIR/$VM_NAME/.boot_mode_direct" ] \
      && [ -f "$BASE_DIR/$ARCH/vmlinuz-virt" ] \
      && [ -f "$BASE_DIR/$ARCH/initramfs-virt" ]; then
+    # AQ_KERNEL_APPEND_EXTRA: appended to the kernel cmdline. Used by the
+    # benchmark harness to A/B knobs like `noapic` or `tsc=reliable` without
+    # forking the script. Production VMs leave it unset.
+    local kernel_append="console=$CONSOLE root=/dev/vda3 rootfstype=ext4 modules=ext4,virtio-pci rw quiet"
+    [ -n "${AQ_KERNEL_APPEND_EXTRA:-}" ] && kernel_append="$kernel_append ${AQ_KERNEL_APPEND_EXTRA}"
     boot_args=(
       -kernel "$BASE_DIR/$ARCH/vmlinuz-virt"
       -initrd "$BASE_DIR/$ARCH/initramfs-virt"
-      -append "console=$CONSOLE root=/dev/vda3 rootfstype=ext4 modules=ext4,virtio-pci rw quiet"
+      -append "$kernel_append"
     )
   else
     boot_args=(
@@ -1157,10 +1162,16 @@ aq_start() {
   local vm_memory_g
   vm_memory_g=$(cat "$BASE_DIR/$VM_NAME/.memory" 2>/dev/null || echo "1")
 
+  # Benchmark/perf-tuning hooks (left unset in production):
+  #   AQ_DRIVE_EXTRA       — appended to the storage `-drive` directive
+  #                          (e.g. ",aio=io_uring,cache.direct=on")
+  #   AQ_QEMU_EXTRA_ARGS   — extra raw QEMU args (e.g. "-smp 2")
+  #   AQ_MACHINE_OVERRIDE  — replaces $MACHINE_OPTS for this run
+  local machine_opts="${AQ_MACHINE_OVERRIDE:-$MACHINE_OPTS}"
   $QEMU_BIN \
-    -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m "${vm_memory_g}G" \
+    -machine $machine_opts -accel $ACCEL -cpu host -m "${vm_memory_g}G" \
     "${boot_args[@]}" \
-    -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2 \
+    -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2${AQ_DRIVE_EXTRA:-} \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
     -rtc base=utc,clock=host \
     -serial unix:$BASE_DIR/$VM_NAME/command.sock,server=on,wait=off,nodelay=on \
@@ -1171,7 +1182,7 @@ aq_start() {
     -display none \
     -parallel none \
     -monitor none \
-    $incoming_args
+    $incoming_args ${AQ_QEMU_EXTRA_ARGS:-}
 
   # qemu started with -incoming sits in inmigrate/paused state. Wait for the
   # migration to apply, then resume the CPU and verify the VM is actually

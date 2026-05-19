@@ -1,0 +1,145 @@
+name: Bench (Linux warm aq start)
+
+on:
+  push:
+    paths:
+      - aq
+      - tests/bench-aq-start.sh
+      - .github/workflows/bench.yml
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per configuration"
+        default: "5"
+        required: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUNS: ${{ github.event.inputs.runs || '5' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM access for runner user
+        run: |
+          ls -l /dev/kvm
+          sudo chmod 666 /dev/kvm
+          [ -r /dev/kvm ] && [ -w /dev/kvm ]
+
+      - name: Restore apt cache
+        id: apt-cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: aq-ci-apt-noble-v3
+          restore-keys: aq-ci-apt-noble-
+
+      - name: Install dependencies
+        run: |
+          sudo chmod -R a+r /var/cache/apt/archives 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils \
+            socat \
+            ovmf \
+            wget gpg ca-certificates \
+            coreutils \
+            meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev \
+            git build-essential
+
+      - name: Restore tio binary
+        id: tio-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/tio
+          key: aq-ci-tio-v3.9-noble
+
+      - name: Build tio from source
+        if: steps.tio-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v3.9 https://github.com/tio/tio.git /tmp/tio
+          cd /tmp/tio && meson setup build && meson compile -C build && sudo meson install -C build
+
+      - name: Add SSH key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: QEMU + kernel version
+        run: |
+          qemu-system-x86_64 --version | head -1
+          ls -l /boot/vmlinuz-* 2>/dev/null || true
+          uname -a
+
+      - name: Pre-build base (size 2G)
+        # The first `aq new --size=2G` triggers a one-shot ~30 s install.
+        # Burn it here so the perf configurations don't each pay it.
+        run: |
+          ./aq new --size=2G _warmup
+          ./aq start _warmup
+          ./aq stop _warmup
+          ./aq rm _warmup
+
+      - name: bench — baseline
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l baseline | tee -a bench.tsv
+
+      - name: bench — aio=io_uring,cache.direct=on
+        env:
+          AQ_DRIVE_EXTRA: ",aio=io_uring,cache.direct=on"
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l io_uring | tee -a bench.tsv
+
+      - name: bench — aio=native,cache.direct=on
+        env:
+          AQ_DRIVE_EXTRA: ",aio=native,cache.direct=on"
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l native | tee -a bench.tsv
+
+      - name: bench — aio=threads (explicit)
+        env:
+          AQ_DRIVE_EXTRA: ",aio=threads"
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l threads | tee -a bench.tsv
+
+      - name: bench — -smp 2
+        env:
+          AQ_QEMU_EXTRA_ARGS: "-smp 2"
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l smp2 | tee -a bench.tsv
+
+      - name: bench — kernel cmdline tweaks
+        env:
+          AQ_KERNEL_APPEND_EXTRA: "tsc=reliable no_timer_check nokaslr"
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l kcmd | tee -a bench.tsv
+
+      - name: bench — io_uring + smp2 + kcmd (stacked)
+        env:
+          AQ_DRIVE_EXTRA: ",aio=io_uring,cache.direct=on"
+          AQ_QEMU_EXTRA_ARGS: "-smp 2"
+          AQ_KERNEL_APPEND_EXTRA: "tsc=reliable no_timer_check nokaslr"
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l stacked | tee -a bench.tsv
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Benchmark summary"
+            echo
+            echo "QEMU: \`$(qemu-system-x86_64 --version | head -1)\`"
+            echo "Host: \`$(uname -srvm)\`"
+            echo
+            echo "| label | min | median | max |"
+            echo "|---|---|---|---|"
+            grep '^summary' bench.tsv | while IFS=$'\t' read -r tag label data; do
+              min=$(echo "$data" | sed -E 's/.*min=([0-9]+)ms.*/\1/')
+              med=$(echo "$data" | sed -E 's/.*median=([0-9]+)ms.*/\1/')
+              max=$(echo "$data" | sed -E 's/.*max=([0-9]+)ms.*/\1/')
+              echo "| $label | ${min}ms | ${med}ms | ${max}ms |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bench.tsv
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-tsv
+          path: bench.tsv
