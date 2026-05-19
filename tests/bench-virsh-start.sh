@@ -86,7 +86,7 @@ sudo virt-install \
   --disk path=/var/lib/libvirt/images/$VM_NAME-seed.iso,device=cdrom \
   --os-variant=alpinelinux3.18 \
   --network network=default,model=virtio \
-  --import --noautoconsole --graphics none --console none --serial none \
+  --import --noautoconsole --graphics none \
   >/dev/null
 
 echo "# [prelude] wait for DHCP lease + SSH (first boot includes cloud-init)"
