@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.5
+VERSION=2.5.6
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1212,6 +1212,17 @@ aq_start() {
     local qmp_sock="$BASE_DIR/$VM_NAME/qmp.sock"
     if ! qmp_wait_migrate_incoming "$qmp_sock"; then
       stderr "Error: incoming migration did not complete; the VM may be in a bad state."
+      # Known upstream QEMU bug on macOS aarch64 + QEMU 11.0.0: ARM target
+      # asserts during incoming migration (target/arm/machine.c:1045,
+      # cpu_pre_load !cpreg_vmstate_indexes). Hint the user at the workaround
+      # so they don't waste time bisecting their own setup.
+      if [ "$HOST_OS" = darwin ] && [ "$ARCH" = aarch64 ] \
+         && "$QEMU_BIN" --version 2>/dev/null | head -1 | grep -qE 'version 11\.0\.0( |$)'; then
+        stderr ""
+        stderr "Hint: this is the known QEMU 11.0.0 aarch64 HVF live-restore regression."
+        stderr "  See docs/comparison.md / README Troubleshooting for the workaround."
+        stderr "  Upstream fix: https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426"
+      fi
       exit 1
     fi
     local cont_attempt=0

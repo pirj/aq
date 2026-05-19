@@ -208,6 +208,50 @@ Live snapshots bind the captured boot mode and RAM size. If `aq new --from-snaps
 
 Cold snapshots (created from a stopped VM) have no such constraints.
 
+### macOS aarch64 + QEMU 11.0.0: live restore asserts in cpu_pre_load
+
+Upstream QEMU 11.0.0 has a regression that affects aarch64 HVF live-snapshot restore specifically:
+
+```
+ERROR:target/arm/machine.c:1045:cpu_pre_load:
+  assertion failed: (!cpu->cpreg_vmstate_indexes)
+```
+
+aq surfaces this as `Error: incoming migration did not complete` plus a hint pointing here. Cold snapshots and Linux KVM x86_64 are unaffected — only the macOS-aarch64-with-memory restore path trips it.
+
+**Root cause** (in case you want to confirm against your own setup): commit [`ab2ddc7b66`](https://gitlab.com/qemu-project/qemu/-/commit/ab2ddc7b66) (in `v11.0.0`) made the ARM target's `cpreg_vmstate_indexes` array auto-allocated by the migration framework and added a `g_assert(!cpu->cpreg_vmstate_indexes)` precondition in `cpu_pre_load`. The HVF code path pre-allocates that same array at vCPU init (since v6.2.0, originally harmless), so the assertion fires on every incoming migration.
+
+**Upstream fix**: [`06fd39e426`](https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426) (on `master`, post-v11.0.0) — six lines, removes the HVF pre-allocation. Not yet in any tagged release.
+
+**Workaround until QEMU 11.0.1 / 11.1 ships**:
+
+1. Clone QEMU at `v11.0.0`, cherry-pick the fix, build the aarch64 target:
+
+   ```sh
+   git clone --depth=1 --branch v11.0.0 https://gitlab.com/qemu-project/qemu.git
+   cd qemu
+   git fetch --depth=1 https://gitlab.com/qemu-project/qemu.git master:upstream-master
+   git cherry-pick 06fd39e426
+   brew install ninja pkg-config glib pixman   # qemu build deps not always pre-installed
+   ./configure --target-list=aarch64-softmmu --enable-hvf --disable-docs
+   ninja -C build qemu-system-aarch64
+   ```
+
+2. Put the resulting `build/qemu-system-aarch64` ahead of brew's in `PATH`:
+
+   ```sh
+   mkdir -p ~/.local/bin
+   ln -sf $PWD/build/qemu-system-aarch64 ~/.local/bin/qemu-system-aarch64
+   export PATH="$HOME/.local/bin:$PATH"   # or add to ~/.zshrc
+   qemu-system-aarch64 --version          # should show "(v11.0.0-1-...)"
+   ```
+
+3. `aq new --from-snapshot=<live-tag>` should now resume in ~700 ms.
+
+The aq project's own bench measures **645 ms median live-restore** on M3 HVF with the patched QEMU — matching the Linux KVM number, confirming the fix unblocks the macOS path entirely.
+
+Once QEMU 11.0.1+ lands in homebrew-core, this section becomes a footnote.
+
 ### Linux: `aq start` errors with "KVM is required"
 
 `/dev/kvm` isn't accessible. Verify:

@@ -63,14 +63,17 @@ Two benches on two pieces of hardware. Each ran the same `aq` script side by sid
 | `podman_sshd` — `podman run -d -p :22 docker.io/panubo/sshd` → TCP-accept | 92 ms | **96 ms** | 815 ms | ~70× faster |
 | `virsh_start` — `virsh start <dom>` on Alpine cloud qcow2 (cloud-init pre-warmed) | 16274 ms | **16501 ms** | 16791 ms | ~2.5× *slower* |
 
-**Apple M3 HVF (aarch64)**, n=5, 100 ms probe cadence:
+**Apple M3 HVF (aarch64)**, n=5 unless noted, 100 ms probe cadence:
 
 | target | min | **median** | max | vs `aq_cold` |
 |---|---|---|---|---|
 | `aq_cold` — `aq new --size=2G` + `aq start` | 3940 ms | **4163 ms** | 4383 ms | 1× (baseline) |
+| `aq_live` (HVF, **patched** QEMU v11.0.0 + upstream fix `06fd39e426`) [n=3] | 645 ms | **645 ms** | 651 ms | **~6.5× faster** |
+| `aq_live` (HVF, stock brew QEMU 11.0.0) | — | *fails — upstream ARM regression* | — | n/a |
 | `macpine_start` — `alpine launch` + warm-up, then loop `alpine start <vm>` | 14401 ms | **18461 ms** | 18606 ms | ~4.4× *slower* |
-| `aq_live` (HVF) | — | *upstream QEMU 11.0.0 ARM regression* | — | n/a here |
 | OrbStack | — | *no CI path; published sub-second figure not independently verified* | — | n/a here |
+
+The patched-QEMU live-restore row is interesting: **645 ms on M3 HVF beats the 680 ms on GH Linux KVM** — same fix unblocks parity across both backends. See `tools/qemu-livesave-repro/` for the reproducer + patch.
 
 Source: `.github/workflows/bench-vs-docker-sshd.yml`, `bench-vs-virsh.yml`, and the `tests/bench-*.sh` scripts. M3 numbers are local-machine measurements.
 

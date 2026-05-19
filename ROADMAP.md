@@ -95,26 +95,44 @@ Where it *would* matter is converting the base from `.raw` to `qcow2` with `-c -
 
 ### Bugs
 
-#### Live snapshot restore broken on QEMU 11.0.0 + aarch64 HVF
+#### Live snapshot restore broken on QEMU 11.0.0 + aarch64 HVF — root-caused, upstream patch identified
 
-Surfaced by the 2026-05-19 isolated live-vs-cold benchmark. `aq new --from-snapshot=<live-tag>` + `aq start` consistently fails with QEMU assertion during incoming migration:
+Surfaced 2026-05-19 by the isolated live-vs-cold benchmark. `aq new --from-snapshot=<live-tag>` + `aq start` consistently failed on macOS aarch64 HVF with:
 
 ```
 ERROR:target/arm/machine.c:1045:cpu_pre_load:
   assertion failed: (!cpu->cpreg_vmstate_indexes)
 ```
 
-QEMU dies immediately; aq's QMP poll loop sees no `info status` response and reports "Incoming migration did not apply after 300 polls". Affects every kind=live restore on Apple Silicon hosts.
+Linux KVM x86_64 is unaffected — different cpreg lifecycle.
 
-Reproduces with the manual QEMU command-line equivalent of aq's start path (without -daemonize) so stderr is visible. The assertion is in QEMU's ARM machine.c — appears to be a regression in QEMU 11.x or an HVF-specific issue. `tests/live-snapshots.sh` may have been silently broken since the QEMU bump.
+**Min reproduce** (no aq, pure QEMU, ~70 lines) lives in `tools/qemu-livesave-repro/repro.sh`. Boot a tiny aarch64 guest under HVF, capture memory via QMP `migrate file:...`, spawn a fresh qemu with `-incoming file:...`. The destination qemu dies with the assertion before getting to any aq-managed step.
 
-- [ ] Confirm `tests/live-snapshots.sh` fails on current QEMU 11.0.0
-- [ ] Bisect: does the regression land on a specific QEMU release (10.x vs 11.x)?
-- [ ] Look for upstream QEMU bug reports / patches for `cpu_pre_load` on aarch64 HVF
-- [ ] Try compat machine type (`-machine virt-9.0`, etc.)
-- [ ] Workaround: `-S` (start halted) + delayed `cont` after migration apply?
+**Root cause** is a two-commit interaction:
 
-Blocks bakeri.sh's docker-compose `kind = "live"` story end-to-end — without aq's live restore, the snapshot framework can save `memory.bin` but the restore never delivers its sub-second promise.
+- [`a1477da3dd`](https://gitlab.com/qemu-project/qemu/-/commit/a1477da3dd) (QEMU v6.2.0, late 2022): `hvf: Add Apple Silicon support`. Allocates `cpu->cpreg_vmstate_indexes` and `cpu->cpreg_vmstate_values` at vCPU init via `g_renew(...)`. At the time the precondition didn't exist, so the pre-allocation was harmless dead code.
+- [`ab2ddc7b66`](https://gitlab.com/qemu-project/qemu/-/commit/ab2ddc7b66) (QEMU v11.0.0-rc0, March 2026): `target/arm/machine: Use VMSTATE_VARRAY_INT32_ALLOC for cpreg arrays`. Switches the cpreg vmstate arrays to migration-framework-managed allocation and adds `g_assert(!cpu->cpreg_vmstate_indexes)` as a precondition in `cpu_pre_load`. Authored by Eric Auger, reviewed/suggested by Peter Maydell.
+
+The HVF Apple-Silicon path pre-allocates exactly the same field the new assert says must be NULL — so every aarch64 HVF live restore on QEMU 11.0.0 trips the assertion. Linux KVM doesn't pre-allocate (only `cpu_pre_save` would, and the destination doesn't run that), so KVM is fine.
+
+**Upstream fix**: [`06fd39e426`](https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426) `target/arm/hvf: Stop pre-allocating cpreg_vmstate arrays`, Scott J. Goldman, April 2026. Six lines, removes the HVF pre-allocation so the assert holds. On `master`; **no tagged release contains it yet** (latest tag is `v11.0.0`).
+
+**Verified locally on M3 HVF**:
+
+| qemu | result |
+|---|---|
+| stock brew `v11.0.0` | assertion, qemu dies on `-incoming` |
+| `v11.0.0` + cherry-pick of `06fd39e426` | restore + resume succeed, `aq` bench: **645 ms median** (n=3, 6 ms spread), matches the Linux KVM 680 ms parity |
+
+User-facing landing in aq:
+
+- [x] Min reproduce extracted from aq into a 70-line script that uses pure qemu (no aq, no disk).
+- [x] Verified the regression is QEMU-side, not aq-side (cherry-pick + rebuild fixes it without any aq change).
+- [x] aq surfaces the QEMU 11.0.0 / darwin / aarch64 combination with a hint pointing at the workaround instead of letting the user puzzle through "Incoming migration did not apply after 300 polls".
+- [x] README Troubleshooting documents the cherry-pick + local-build workaround.
+- [ ] Bump aq's QEMU requirement to whatever release actually contains the fix once upstream cuts one (`v11.0.1` / `v11.1.0`). Until then there's nothing to land on the aq side.
+
+`tests/live-snapshots.sh` still passes on Linux KVM CI (which is unaffected) and would fail on macOS HVF; the conditional skip is a follow-up nicety, not a blocker.
 
 ### Deferred from spec reviews
 

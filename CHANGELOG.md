@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.5.6 "Patch in hand" 2026-05-19
+
+### UX
+
+- **Actionable hint for the QEMU 11.0.0 macOS aarch64 live-restore regression.** When `aq new --from-snapshot=<live-tag>` + `aq start` would otherwise just print `Error: incoming migration did not complete`, aq now detects the specific (darwin, aarch64, QEMU exactly `11.0.0`) combination and follows up with a hint pointing at the upstream commit and the README workaround section, so users don't waste time bisecting their own setup.
+
+### New: `tools/qemu-livesave-repro/`
+
+A pure-QEMU (no aq) reproducer for the regression that broke aq's macOS live-snapshot restore path:
+
+- `repro.sh` — boots a tiny aarch64 HVF guest, captures memory via QMP `migrate file:...`, then starts a fresh qemu with `-incoming file:...`. Exits 0 when the upstream assertion fires.
+- `verify-fix.sh` — same setup but attaches to the destination's QMP, confirms the VM reaches `paused` (not `paused (inmigrate)`), sends `cont`, and verifies the VM transitions to `running`. Exits 0 only when the full restore + resume cycle succeeds.
+- `0001-hvf-stop-prealloc-cpreg-vmstate.patch` — the upstream fix (`06fd39e426` on QEMU master) exported as a `git am`-ready patch.
+- `README.md` — full root-cause writeup (offending commit `ab2ddc7b66` from QEMU v11.0.0-rc0 added a new precondition that conflicts with HVF's pre-allocation introduced in `a1477da3dd` from v6.2.0) and step-by-step instructions to build a patched `qemu-system-aarch64` that aq picks up via `PATH`.
+
+### Measured on M3 HVF, against patched QEMU 11.0.0
+
+| target | median (n=3) |
+|---|---|
+| `aq_cold` (M3 HVF) | 4163 ms |
+| **`aq_live` (M3 HVF, patched QEMU)** | **645 ms** |
+
+645 ms on M3 HVF actually edges out the 680 ms Linux KVM number on GH — the upstream patch closes the regression cleanly, no macOS-specific cost. `docs/comparison.md` updated with the new row.
+
+### Docs
+
+- `README.md`: new Troubleshooting subsection "macOS aarch64 + QEMU 11.0.0: live restore asserts in cpu_pre_load" with the cherry-pick + local-build recipe.
+- `ROADMAP.md`: Bugs section closed out with the full RCA, links to the introducing/fixing commits, the M3 vs Linux measurements, and the one open follow-up (bump aq's minimum QEMU once upstream tags a release containing the fix).
+
 ## 2.5.5 "Migrate" 2026-05-19
 
 ### Bug fixes
