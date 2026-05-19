@@ -46,7 +46,8 @@ jobs:
             meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev \
             git build-essential netcat-openbsd \
             libvirt-daemon-system libvirt-clients virtinst libosinfo-bin \
-            cloud-image-utils
+            cloud-image-utils \
+            dnsmasq-base bridge-utils iptables
 
       - name: Start libvirtd + default network
         run: |
