@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.2 "Tap" 2026-05-19
+
+### Distribution
+
+- **Homebrew tap.** `brew install pirj/aq/aq` now installs from a real tap (https://github.com/pirj/homebrew-aq), pulling `qemu`, `tio`, `socat`, `coreutils` (for `shuf`), `wget`, and `gnupg` as deps. Works on macOS and Linuxbrew; Linux still needs system OVMF + KVM access (the formula's caveats spell this out).
+- **Bash completions.** `completions/aq.bash` covers subcommands, VM names from `$BASE_DIR`, snapshot tags, and `aq new` flags (including `--from-snapshot=` completion against existing tags). Homebrew installs it automatically; for manual installs, source the file or drop it into `~/.local/share/bash-completion/completions/aq`.
+
+### Docs
+
+- **Troubleshooting section in README** covering stuck SSH wait, stopped-VM errors, port collision, live-snapshot RAM/boot-mode mismatches, KVM access on Linux, and HVF reinstall after macOS updates.
+- **Install section restructured** — "Homebrew (macOS or Linux)" is now the primary path; "Linux (Debian/Ubuntu) without Homebrew" remains as the source-build alternative.
+
 ## 2.5.1 "Polish" 2026-05-19
 
 ### UX

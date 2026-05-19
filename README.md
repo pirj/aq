@@ -69,15 +69,15 @@ For a finer-grained pipeline you can also use `aq new --from-snapshot=<tag> --co
 
 ### Install
 
-#### macOS
+#### Homebrew (macOS or Linux)
 
     brew install pirj/aq/aq
 
-Or, the underlying dependencies and the script directly:
+Pulls in `qemu`, `tio`, `socat`, `coreutils`, `wget`, and `gnupg` from brew. On Linux you still need KVM access and system OVMF — see the Linux section below for the additional steps brew can't handle.
 
-    brew install qemu tio socat
+The tap lives at https://github.com/pirj/homebrew-aq.
 
-#### Linux (Debian/Ubuntu)
+#### Linux (Debian/Ubuntu) without Homebrew
 
     sudo apt-get install -y --no-install-recommends \
       qemu-system-x86 qemu-utils socat ovmf wget gpg ca-certificates
@@ -90,12 +90,17 @@ Or, the underlying dependencies and the script directly:
     git clone --depth 1 --branch v3.9 https://github.com/tio/tio.git /tmp/tio
     cd /tmp/tio && meson setup build && meson compile -C build && sudo meson install -C build
 
-    # KVM access:
+#### Linux: KVM access (any install method)
+
     sudo usermod -aG kvm $USER   # log out and back in
 
 Verify KVM is reachable:
 
     [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo "KVM OK"
+
+#### Shell completions
+
+The Homebrew install wires bash completions automatically. For a manual install, source `completions/aq.bash` from your `.bashrc` or drop it into `~/.local/share/bash-completion/completions/aq`.
 
 ### Usage
 
@@ -133,6 +138,57 @@ Monitor (advanced QEMU VM control):
 Remove it:
 
     $ aq rm aureate-chuckhole
+
+## Troubleshooting
+
+### `aq start` hangs at "Waiting for SSH..."
+
+The guest booted but isn't accepting SSH yet. Most often it's first-boot inside a fresh base — give it ~30 s. If it persists, peek at the QEMU monitor:
+
+    nc -U ~/.local/share/aq/<vm>/control.sock     # interactive HMP
+    echo info status | nc -U ~/.local/share/aq/<vm>/control.sock
+
+Or watch the serial console directly:
+
+    socat - UNIX:~/.local/share/aq/<vm>/command.sock
+    # ...or attach `tio` (nicer terminal handling) via a PTY:
+    socat UNIX:~/.local/share/aq/<vm>/command.sock PTY,link=/tmp/<vm>.pty &
+    tio /tmp/<vm>.pty
+
+### `aq exec`/`aq console` immediately errors with "VM is not running"
+
+The VM is stopped. Start it: `aq start <vm>`. If `aq ls` shows the VM as `On` but commands still fail, the QEMU process may have died while the per-VM files remain — check `~/.local/share/aq/<vm>/process.pid`.
+
+### Port collision / "could not find a free random port"
+
+`aq` picks ephemeral host ports from the 49152–65535 range and checks each is free before handing it out. If 20 picks in a row are taken, it gives up. Pin a specific port instead:
+
+    aq new -p 2222:22 -p 8080:80 myvm
+
+### Live snapshot refuses to restore
+
+Live snapshots bind the captured boot mode and RAM size. If `aq new --from-snapshot=<tag>` fails with a mismatch, either:
+
+- pass `--memory=<size>` matching the snapshot's `ram_size_mb`,
+- or re-create the snapshot from a VM started under the right `--memory`/boot mode.
+
+Cold snapshots (created from a stopped VM) have no such constraints.
+
+### Linux: `aq start` errors with "KVM is required"
+
+`/dev/kvm` isn't accessible. Verify:
+
+    [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo "KVM OK"
+
+If your user isn't in the `kvm` group:
+
+    sudo usermod -aG kvm $USER     # log out and back in
+
+### macOS: HVF/qemu errors after macOS update
+
+Reinstall qemu so the new system's HVF entitlements match:
+
+    brew reinstall qemu
 
 ## License
 

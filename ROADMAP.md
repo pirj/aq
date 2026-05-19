@@ -39,10 +39,8 @@ Flat backlog across all 2.x releases. Items group by theme, not by version — r
 - [x] remove excessive output around `aq console`/`aq exec`; also first-boot waiter dots — v2.5.1 quietened the warm-boot SSH wait (`aq start` prints just `Started <vm>` on the fast path). First-boot dots already gone for v2.4.0+ VMs (no marker).
 - [x] add error when `aq console`/`aq exec` is run against a stopped VM — v2.5.1 (also covers `aq scp`).
 - [x] detect occupied host ports during random port allocation — v2.5.1 (`random_port` retries with `nc -z -w 1`).
-- [ ] bash completions (subcommands + VM names from `$BASE_DIR`)
-- [ ] add a doc section on troubleshooting (socat patterns, stuck VM diagnostics):
-  - `socat STDIO UNIX:command.sock`
-  - `UNIX:command.sock PTY,link=command.pty & && SOCAT_PID=$! && tio command.pty`
+- [x] bash completions — v2.5.2 ships `completions/aq.bash` covering subcommands, VM names from `$BASE_DIR`, snapshot tags, and `aq new` flags. Homebrew installs it automatically.
+- [x] add a doc section on troubleshooting — v2.5.2 added a Troubleshooting section in README (stuck SSH wait, stopped-VM errors, port collision, snapshot mismatches, KVM/HVF env issues).
 
 ### Guest base cleanup
 
@@ -56,7 +54,7 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 
 ### Distribution
 
-- [ ] formula/tap. dependencies: tio! socat! qemu! zstd (image compression)?
+- [x] formula/tap — `brew install pirj/aq/aq` works on macOS and Linuxbrew via https://github.com/pirj/homebrew-aq. Deps: qemu, tio, socat, coreutils (shuf), wget, gnupg. Linux still needs system OVMF + KVM access (caveats note this).
 
 ### Configuration
 
