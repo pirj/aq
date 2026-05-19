@@ -18,7 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      RUNS: ${{ github.event.inputs.runs || '5' }}
+      RUNS: ${{ github.event.inputs.runs || '10' }}
+      # Tighter probe so the ~0.5 s default rounding doesn't smear small
+      # per-config differences. With 10 runs at 0.1 s rounding we can
+      # tell a 200 ms median delta apart.
+      AQ_SSH_PROBE_INTERVAL: "0.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -83,40 +87,38 @@ jobs:
           ./aq stop _warmup
           ./aq rm _warmup
 
-      - name: bench — baseline
+      - name: bench — baseline (cache=writeback, aio=threads — QEMU defaults)
         run: bash tests/bench-aq-start.sh -n "$RUNS" -l baseline | tee -a bench.tsv
 
-      - name: bench — aio=io_uring,cache.direct=on
+      - name: bench — aio=io_uring (writeback cache, no direct I/O)
+        env:
+          AQ_DRIVE_EXTRA: ",aio=io_uring"
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l io_uring_wb | tee -a bench.tsv
+
+      - name: bench — aio=io_uring,cache.direct=on (canonical io_uring)
         env:
           AQ_DRIVE_EXTRA: ",aio=io_uring,cache.direct=on"
-        run: bash tests/bench-aq-start.sh -n "$RUNS" -l io_uring | tee -a bench.tsv
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l io_uring_d | tee -a bench.tsv
 
-      - name: bench — aio=native,cache.direct=on
+      - name: bench — aio=native,cache.direct=on (POSIX AIO)
         env:
           AQ_DRIVE_EXTRA: ",aio=native,cache.direct=on"
-        run: bash tests/bench-aq-start.sh -n "$RUNS" -l native | tee -a bench.tsv
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l native_d | tee -a bench.tsv
 
-      - name: bench — aio=threads (explicit)
+      - name: bench — aio=threads,cache.direct=on (isolate cache.direct cost)
         env:
-          AQ_DRIVE_EXTRA: ",aio=threads"
-        run: bash tests/bench-aq-start.sh -n "$RUNS" -l threads | tee -a bench.tsv
+          AQ_DRIVE_EXTRA: ",aio=threads,cache.direct=on"
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l threads_d | tee -a bench.tsv
 
       - name: bench — -smp 2
         env:
           AQ_QEMU_EXTRA_ARGS: "-smp 2"
         run: bash tests/bench-aq-start.sh -n "$RUNS" -l smp2 | tee -a bench.tsv
 
-      - name: bench — kernel cmdline tweaks
+      - name: bench — kernel cmdline (tsc=reliable no_timer_check nokaslr)
         env:
           AQ_KERNEL_APPEND_EXTRA: "tsc=reliable no_timer_check nokaslr"
         run: bash tests/bench-aq-start.sh -n "$RUNS" -l kcmd | tee -a bench.tsv
-
-      - name: bench — io_uring + smp2 + kcmd (stacked)
-        env:
-          AQ_DRIVE_EXTRA: ",aio=io_uring,cache.direct=on"
-          AQ_QEMU_EXTRA_ARGS: "-smp 2"
-          AQ_KERNEL_APPEND_EXTRA: "tsc=reliable no_timer_check nokaslr"
-        run: bash tests/bench-aq-start.sh -n "$RUNS" -l stacked | tee -a bench.tsv
 
       - name: Summary
         if: always()
