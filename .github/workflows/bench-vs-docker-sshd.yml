@@ -1,11 +1,13 @@
-name: Bench (aq vs panubo/sshd)
+name: Bench (aq vs alternatives — Linux)
 
 on:
   push:
     paths:
       - aq
       - tests/bench-aq-start.sh
+      - tests/bench-aq-from-live-snapshot.sh
       - tests/bench-docker-sshd.sh
+      - tests/bench-podman-sshd.sh
       - .github/workflows/bench-vs-docker-sshd.yml
   workflow_dispatch:
     inputs:
@@ -34,10 +36,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /var/cache/apt/archives
-          key: aq-ci-apt-noble-v3
+          key: aq-ci-apt-noble-v4
           restore-keys: aq-ci-apt-noble-
 
-      - name: Install aq deps
+      - name: Install deps (aq + podman)
         run: |
           sudo chmod -R a+r /var/cache/apt/archives 2>/dev/null || true
           sudo apt-get update
@@ -45,7 +47,8 @@ jobs:
             qemu-system-x86 qemu-utils socat ovmf \
             wget gpg ca-certificates coreutils \
             meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev \
-            git build-essential netcat-openbsd
+            git build-essential netcat-openbsd \
+            podman
 
       - name: Restore tio
         id: tio-cache
@@ -73,28 +76,32 @@ jobs:
           ./aq stop _warmup
           ./aq rm _warmup
 
-      - name: Pull panubo/sshd
-        # Image is panubo/sshd on Docker Hub (the GitHub repo is named
-        # panubo/docker-sshd by their convention; the image is shorter).
-        # Pre-pull so the timed runs measure warm-cache `docker run` only,
-        # to match the way the aq bench measures warm `aq start` (not the
-        # one-time per-size base build).
-        run: docker pull panubo/sshd
+      - name: Pull panubo/sshd (Docker + Podman both pull this image)
+        run: |
+          docker pull panubo/sshd
+          podman pull docker.io/panubo/sshd
 
-      - name: bench — aq warm aq new+start
-        run: bash tests/bench-aq-start.sh -n "$RUNS" -l aq | tee -a bench.tsv
+      - name: bench — aq cold (warm new+start)
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l aq_cold | tee -a bench.tsv
 
-      - name: bench — panubo/sshd run-to-ssh-ready
+      - name: bench — aq live restore (from-snapshot with memory)
+        run: bash tests/bench-aq-from-live-snapshot.sh -n "$RUNS" -l aq_live | tee -a bench.tsv
+
+      - name: bench — panubo/sshd via Docker
         run: bash tests/bench-docker-sshd.sh -n "$RUNS" -l docker_sshd | tee -a bench.tsv
+
+      - name: bench — panubo/sshd via Podman
+        run: bash tests/bench-podman-sshd.sh -n "$RUNS" -l podman_sshd | tee -a bench.tsv
 
       - name: Summary
         if: always()
         run: |
           {
-            echo "## aq vs panubo/docker-sshd — same runner, same probe granularity"
+            echo "## aq vs alternatives — same Linux runner, same probe granularity (100 ms)"
             echo
             echo "QEMU: \`$(qemu-system-x86_64 --version | head -1)\`"
             echo "Docker: \`$(docker --version)\`"
+            echo "Podman: \`$(podman --version)\`"
             echo "Host: \`$(uname -srvm)\`"
             echo
             echo "| target | min | median | max | n |"
@@ -107,13 +114,15 @@ jobs:
               echo "| $label | ${min}ms | ${med}ms | ${max}ms | $n |"
             done
             echo
-            echo "**aq**: \`aq new --size=2G\` + \`aq start\` measured wall-clock; full kernel boot, OpenRC, sshd ready."
-            echo "**panubo/docker-sshd**: \`docker run -d -p :22 panubo/docker-sshd\` + ssh probe; image pre-pulled, shared host kernel."
+            echo "**aq_cold**: \`aq new --size=2G\` + \`aq start\` — full kernel boot, OpenRC, sshd ready."
+            echo "**aq_live**: \`aq new --from-snapshot=<live-tag>\` + \`aq start\` — QEMU \`-incoming\` resumes captured memory; no kernel boot."
+            echo "**docker_sshd**: \`docker run -d -p :22 panubo/sshd\` + TCP-accept probe."
+            echo "**podman_sshd**: \`podman run -d -p :22 docker.io/panubo/sshd\` + TCP-accept probe."
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload bench.tsv
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-vs-docker-sshd
+          name: bench-vs-alternatives
           path: bench.tsv

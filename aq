@@ -940,6 +940,14 @@ qmp_send() {
 # Poll the VM status until it leaves the inmigrate state. After incoming
 # migration applies, qemu transitions to paused (caller should send cont).
 # Args: <sock>. Returns 0 when out of inmigrate, 1 on timeout.
+#
+# Bash case statements match top-down, first match wins, so the
+# (inmigrate) case must come before the bare `paused` case — otherwise
+# `*'VM status: paused'*` swallows `paused (inmigrate)` and the caller
+# sends `cont` before migration finished. Caught on macOS HVF where
+# migration is slow enough to be observable in the inmigrate state;
+# Linux KVM was fast enough that the bug was latent (polling tended to
+# catch the post-migrate window).
 qmp_wait_migrate_incoming() {
   local sock=$1
   local max_attempts=${2:-300}
@@ -948,8 +956,9 @@ qmp_wait_migrate_incoming() {
     local resp
     resp=$(qmp_hmp "$sock" 'info status' 2>/dev/null)
     case "$resp" in
-      *'VM status: paused'*)   return 0 ;;
-      *'VM status: running'*)  return 0 ;;
+      *'VM status: paused (inmigrate)'*) : ;;        # still migrating, keep waiting
+      *'VM status: paused'*)             return 0 ;; # migration done, ready for cont
+      *'VM status: running'*)            return 0 ;; # cont already happened (autocont)
     esac
     attempt=$((attempt + 1))
     sleep 0.2
