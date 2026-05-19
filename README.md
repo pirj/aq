@@ -223,30 +223,21 @@ aq surfaces this as `Error: incoming migration did not complete` plus a hint poi
 
 **Upstream fix**: [`06fd39e426`](https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426) (on `master`, post-v11.0.0) — six lines, removes the HVF pre-allocation. Not yet in any tagged release.
 
-**Workaround until QEMU 11.0.1 / 11.1 ships**:
+**Workaround until QEMU 11.1.0 ships**:
 
-1. Clone QEMU at `v11.0.0`, cherry-pick the fix, build the aarch64 target:
+aq ships a one-shot installer that builds the patched binary and symlinks it under `~/.local/bin`:
 
-   ```sh
-   git clone --depth=1 --branch v11.0.0 https://gitlab.com/qemu-project/qemu.git
-   cd qemu
-   git fetch --depth=1 https://gitlab.com/qemu-project/qemu.git master:upstream-master
-   git cherry-pick 06fd39e426
-   brew install ninja pkg-config glib pixman   # qemu build deps not always pre-installed
-   ./configure --target-list=aarch64-softmmu --enable-hvf --disable-docs
-   ninja -C build qemu-system-aarch64
-   ```
+```sh
+bash tools/qemu-livesave-repro/install-patched-qemu.sh
+export PATH="$HOME/.local/bin:$PATH"     # add to ~/.zshrc to keep it
+qemu-system-aarch64 --version            # expect "(v11.0.0-1-...)"
+```
 
-2. Put the resulting `build/qemu-system-aarch64` ahead of brew's in `PATH`:
+The script clones QEMU `v11.0.0`, applies `tools/qemu-livesave-repro/0001-hvf-stop-prealloc-cpreg-vmstate.patch` (the upstream fix exported as a patch), configures with `--target-list=aarch64-softmmu --enable-hvf`, builds, and symlinks. Re-running it is safe — it skips clone/configure/build when the tree already has the expected commit and binary.
 
-   ```sh
-   mkdir -p ~/.local/bin
-   ln -sf $PWD/build/qemu-system-aarch64 ~/.local/bin/qemu-system-aarch64
-   export PATH="$HOME/.local/bin:$PATH"   # or add to ~/.zshrc
-   qemu-system-aarch64 --version          # should show "(v11.0.0-1-...)"
-   ```
+Once the patched binary is ahead of brew's on `PATH`, `aq new --from-snapshot=<live-tag>` resumes in ~700 ms — same as Linux KVM.
 
-3. `aq new --from-snapshot=<live-tag>` should now resume in ~700 ms.
+If you'd rather do it by hand: see `tools/qemu-livesave-repro/README.md` for the step-by-step + the `verify-fix.sh` end-to-end test.
 
 The aq project's own bench measures **645 ms median live-restore** on M3 HVF with the patched QEMU — matching the Linux KVM number, confirming the fix unblocks the macOS path entirely.
 

@@ -10,6 +10,10 @@ ERROR:target/arm/machine.c:1045:cpu_pre_load:
 
 ## Files
 
+- `install-patched-qemu.sh` — one-shot installer. Clones QEMU `v11.0.0`,
+  applies the patch, builds `qemu-system-aarch64`, symlinks it into
+  `~/.local/bin/`. Idempotent — safe to re-run; skips clone/configure/
+  build when the tree is already current.
 - `repro.sh` — boots a tiny aarch64 guest under HVF, dumps memory via
   QMP `migrate file:...`, then starts a fresh qemu with `-incoming
   file:...` and observes the assertion. Exits 0 when the assertion
@@ -25,6 +29,16 @@ ERROR:target/arm/machine.c:1045:cpu_pre_load:
   init code's pre-allocation of `cpreg_vmstate_indexes`, which
   conflicts with the assertion added in v11.0.0
   ([`ab2ddc7b66`](https://gitlab.com/qemu-project/qemu/-/commit/ab2ddc7b66)).
+
+## Quick install (one command)
+
+```sh
+bash install-patched-qemu.sh
+export PATH="$HOME/.local/bin:$PATH"
+qemu-system-aarch64 --version    # expect (v11.0.0-1-...)
+```
+
+Then `aq new --from-snapshot=<live-tag>` lands in ~700 ms instead of asserting.
 
 ## Quick run
 
