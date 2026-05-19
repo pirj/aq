@@ -82,12 +82,39 @@ Where it *would* matter is converting the base from `.raw` to `qcow2` with `-c -
 - [ ] alpemu.dev — starts with full-screen terminal, basic commands to start a machine, run something on it, and then more terminals spawn and like a few dozen. on scroll
 - [ ] can be used as a backend for containers.dev? https://github.com/microsoft/vscode-remote-try-rust/blob/main/.devcontainer/devcontainer.json
 - [x] benchmarks/feature rundown vs Docker/Macpine/OrbStack/Podman/Virsh — shipped in `docs/comparison.md` (structured table across size / cold+warm start / isolation / configurability / reproducibility / horizontal scalability / data sharing / snapshot+overlay support / networking / platforms / daemon+rootless / licensing).
-  - [x] **Measured aq vs `panubo/sshd`** on the same GH ubuntu-latest KVM runner, n=10, 100 ms probe: aq warm `aq new`+`aq start` median **5368 ms** vs docker-sshd `docker run`-to-TCP-accept median **113 ms** — ~47× gap, the cost of full kernel isolation end-to-end. Bench is automated: `.github/workflows/bench-vs-docker-sshd.yml`, sources `tests/bench-docker-sshd.sh` + `tests/bench-aq-start.sh`.
+  - [x] **Measured medians (same runner, 100 ms probe, n=10 unless noted)**:
+    - **Linux GH `ubuntu-latest` KVM**: aq_cold 6695 ms · aq_live 680 ms · docker_sshd 142 ms · podman_sshd 96 ms · virsh_start 16501 ms (n=5).
+    - **Apple M3 HVF**: aq_cold 4163 ms · macpine_start 18461 ms.
+    - **OrbStack**: not measured (requires GUI license acceptance on first run; GH `macos-latest` has no nested-virt anyway).
+    - Bench is automated where possible: `.github/workflows/bench-vs-docker-sshd.yml` (aq cold + live, docker, podman) and `bench-vs-virsh.yml`. macpine numbers are local-M3 measurements; the GH `macos-latest` workflow was dropped because it has no HVF.
 
 ### Already declined
 
 - [-] add `--nowait` option to `aq start` — Use background jobs (`&`) and the `wait` command instead.
 - [-] add a special interim status "Booting" to `aq_ls` — doesn't justify the complexity.
+
+### Bugs
+
+#### Live snapshot restore broken on QEMU 11.0.0 + aarch64 HVF
+
+Surfaced by the 2026-05-19 isolated live-vs-cold benchmark. `aq new --from-snapshot=<live-tag>` + `aq start` consistently fails with QEMU assertion during incoming migration:
+
+```
+ERROR:target/arm/machine.c:1045:cpu_pre_load:
+  assertion failed: (!cpu->cpreg_vmstate_indexes)
+```
+
+QEMU dies immediately; aq's QMP poll loop sees no `info status` response and reports "Incoming migration did not apply after 300 polls". Affects every kind=live restore on Apple Silicon hosts.
+
+Reproduces with the manual QEMU command-line equivalent of aq's start path (without -daemonize) so stderr is visible. The assertion is in QEMU's ARM machine.c — appears to be a regression in QEMU 11.x or an HVF-specific issue. `tests/live-snapshots.sh` may have been silently broken since the QEMU bump.
+
+- [ ] Confirm `tests/live-snapshots.sh` fails on current QEMU 11.0.0
+- [ ] Bisect: does the regression land on a specific QEMU release (10.x vs 11.x)?
+- [ ] Look for upstream QEMU bug reports / patches for `cpu_pre_load` on aarch64 HVF
+- [ ] Try compat machine type (`-machine virt-9.0`, etc.)
+- [ ] Workaround: `-S` (start halted) + delayed `cont` after migration apply?
+
+Blocks bakeri.sh's docker-compose `kind = "live"` story end-to-end — without aq's live restore, the snapshot framework can save `memory.bin` but the restore never delivers its sub-second promise.
 
 ### Deferred from spec reviews
 

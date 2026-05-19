@@ -26,7 +26,7 @@ aq is in the "system container" lane: every instance has its own kernel, its own
 | Host platforms | macOS-aarch64, Linux-x86_64 | anywhere Docker runs | anywhere Docker runs | Linux + macOS via VM | macOS only | macOS only | Linux only |
 | Default image size | ~150 MB (Alpine + linux-virt) | ~13 MB (Alpine + openssh) | varies | varies | similar to aq | ~50 MB shared rootfs | depends on cloud image |
 | Cold first start | ~30 s (per-size base build) | <1 s (after `docker pull`) | <1 s | <1 s | ~30–60 s | ~2–5 s | varies |
-| Warm subsequent start | **~4 s (M3) / ~5.4 s (GH KVM)** measured | **113 ms (GH KVM)** measured | ~1–2 s | ~1–2 s | ~5–10 s | sub-second | ~5–10 s |
+| Warm subsequent start | **cold 4.2 s (M3) / 6.7 s (GH KVM); live 680 ms (GH KVM)** | **142 ms (GH KVM)** | ~1–2 s | **96 ms (GH KVM)** | **18.5 s (M3)** | sub-second (claimed) | **16.5 s (GH KVM)** |
 | Snapshot (cold) | yes; raw+qcow2 chain | image commit (heavier) | image commit | image commit | no first-class | yes | qcow2 internal |
 | Snapshot (live, w/ memory) | yes (v2.2.0) | no (would need CRIU) | CRIU possible, fiddly | CRIU possible | no | no | yes (savevm) |
 | Fan out N from one state | `aq fanout TAG N -- cmd` | image+exec | image+exec | image+exec | no first-class | no | manual |
@@ -49,9 +49,11 @@ Containers win comfortably. `panubo/sshd` is roughly 13 MB compressed (Alpine + 
 
 That said, the *delta per instance* is similar: both rely on copy-on-write. aq's per-VM `storage.qcow2` typically stays under 200 MB until you actually fill it; Docker's per-container writable layer behaves the same.
 
-### Cold/warm start time — measured on the same runner
+### Cold/warm start time — measured
 
-All four numbers below come from the same GitHub `ubuntu-latest` runner with KVM enabled. Both image pulls and the size-2G aq base are pre-warmed. Each side ran n=10 with the same 100 ms TCP-accept probe cadence. Source: `.github/workflows/bench-vs-docker-sshd.yml` + the four `tests/bench-*.sh` scripts.
+Two benches on two pieces of hardware. Each ran the same `aq` script side by side with the alternative, so the numbers are directly comparable *within* a row block — not across blocks (M3 HVF is faster than the GH Linux runner).
+
+**Linux GH `ubuntu-latest` (x86_64 KVM)**, n=10 (n=5 for `virsh_start`), 100 ms probe cadence:
 
 | target | min | **median** | max | vs `aq_cold` |
 |---|---|---|---|---|
@@ -59,24 +61,40 @@ All four numbers below come from the same GitHub `ubuntu-latest` runner with KVM
 | `aq_live` — `aq new --from-snapshot=<live-tag>` + `aq start` | 678 ms | **680 ms** | 687 ms | **~10× faster** |
 | `docker_sshd` — `docker run -d -p :22 panubo/sshd` → TCP-accept | 137 ms | **142 ms** | 353 ms | ~47× faster |
 | `podman_sshd` — `podman run -d -p :22 docker.io/panubo/sshd` → TCP-accept | 92 ms | **96 ms** | 815 ms | ~70× faster |
+| `virsh_start` — `virsh start <dom>` on Alpine cloud qcow2 (cloud-init pre-warmed) | 16274 ms | **16501 ms** | 16791 ms | ~2.5× *slower* |
 
-Three things worth pointing out:
+**Apple M3 HVF (aarch64)**, n=5, 100 ms probe cadence:
 
-1. **aq live-snapshot restore is genuinely sub-second.** 680 ms median, *9 ms spread* across 10 runs — the most stable bench in the table. QEMU's `-incoming` reads the captured memory image straight back into RAM, skipping the whole kernel-boot + OpenRC + sshd-start path. The remaining 680 ms is QEMU init + memory replay + `cont` + the SSH probe round.
+| target | min | **median** | max | vs `aq_cold` |
+|---|---|---|---|---|
+| `aq_cold` — `aq new --size=2G` + `aq start` | 3940 ms | **4163 ms** | 4383 ms | 1× (baseline) |
+| `macpine_start` — `alpine launch` + warm-up, then loop `alpine start <vm>` | 14401 ms | **18461 ms** | 18606 ms | ~4.4× *slower* |
+| `aq_live` (HVF) | — | *upstream QEMU 11.0.0 ARM regression* | — | n/a here |
+| OrbStack | — | *no CI path; published sub-second figure not independently verified* | — | n/a here |
+
+Source: `.github/workflows/bench-vs-docker-sshd.yml`, `bench-vs-virsh.yml`, and the `tests/bench-*.sh` scripts. M3 numbers are local-machine measurements.
+
+Five things worth pointing out:
+
+1. **aq live-snapshot restore is genuinely sub-second.** 680 ms median, *9 ms spread* across 10 runs — the most stable bench in any of the tables. QEMU's `-incoming` reads the captured memory image straight back into RAM, skipping the whole kernel-boot + OpenRC + sshd-start path. The remaining 680 ms is QEMU init + memory replay + `cont` + the SSH probe round.
 2. **Live snapshots close the cost-of-VM gap from ~47× to ~5×.** Once you've provisioned a VM and snapshotted it running, every subsequent fan-out lands in ~0.7 s — competitive with containers for workflows where you can amortise the provision-once cost. The aq fanout primitive (v2.3.0) does exactly this, spawning N parallel VMs from one live snapshot.
-3. **Podman is a touch faster than Docker** here (96 vs 142 ms median), with one outlier run (815 ms — likely first-run storage initialization). Both run-to-TCP-accept times are dominated by sshd binding to port 22 inside the container, not by the container runtime itself.
+3. **aq is ~2.3–4.4× faster than other QEMU wrappers on the same hardware.** vs `virsh` on Linux (7.2 s → 16.5 s) and vs `macpine` on macOS (4.2 s → 18.5 s). The big delta is direct-kernel-boot (v2.4.0) vs the full UEFI/SeaBIOS bootloader + cloud-init path that both libvirt-managed cloud images and macpine's stock Alpine images go through.
+4. **Podman is a touch faster than Docker** (96 vs 142 ms median), with one outlier run (815 ms — likely first-run storage initialization). Both run-to-TCP-accept times are dominated by sshd binding to port 22 inside the container, not by the container runtime itself.
+5. **`aq_live` on macOS HVF is currently blocked** by an upstream QEMU 11.0.0 regression in the ARM migration code (`target/arm/machine.c:1045: cpu_pre_load: !cpu->cpreg_vmstate_indexes`). Cold snapshots and Linux KVM x86_64 are unaffected. Tracking through QEMU upstream; no aq-side workaround.
 
-Cold-cold (image pull / base build) is excluded from the loop because both sides amortise it indefinitely:
+Cold-cold (image pull / base build / cloud-init first-boot) is excluded from the loop because every system amortises it differently:
 
 - **aq cold first build per size**: ~30 s. Caches per `(alpine-version, arch, size)`; subsequent same-size `aq new` skips it.
 - **`panubo/sshd` first pull**: ~3–5 s on a fast connection. Cached by the container runtime; subsequent runs skip it.
-- **virsh / libvirt**: not benched here yet; see `.github/workflows/bench-vs-virsh.yml` (TODO).
+- **virsh** first boot: cloud-init takes ~30 s on top of the kernel boot to provision SSH keys via NoCloud. The bench warms this up once before the timed loop.
+- **macpine** first launch: ~30 s for image download + first boot. Once an instance exists, `alpine start` reuses it.
 
 The takeaway:
 
 - "Fastest from zero to interactive shell": containers (~100 ms).
-- "Fastest once you've provisioned": still containers, but aq's gap collapses to ~5× via live snapshots.
-- "Fastest *and* I want a full kernel + the host kernel not to be exposed to whatever runs inside": aq live restore, no contender in the table.
+- "Fastest once you've provisioned": still containers, but **aq's gap collapses to ~5×** via live snapshots.
+- "Fastest *full* VM": aq, on both Linux KVM and macOS HVF; ~2.3× vs virsh, ~4.4× vs macpine.
+- "Fastest *and* I want a full kernel + the host kernel not to be exposed to whatever runs inside": **aq live restore**, no contender in any of the tables.
 
 ### Isolation
 
@@ -144,7 +162,11 @@ If "save the running state of this thing and restore it on N machines" is a requ
 
 ## Footnotes & methodology
 
-- aq numbers come from `tests/bench-aq-start.sh` on real hardware: M3 / Apple HVF for the "macOS" column and GH-hosted ubuntu-latest KVM for the "GH KVM" column. n=10, 100 ms TCP-accept probe granularity, size-2G base pre-built.
-- The `panubo/sshd` row comes from `.github/workflows/bench-vs-docker-sshd.yml` running `tests/bench-docker-sshd.sh` on the *same* GH runner as the aq column, with the image pre-pulled and the same 100 ms probe cadence — apples-to-apples on the same hardware so the 47× gap reflects boot architecture, not measurement noise.
-- Numbers for plain Docker, Podman, macpine, OrbStack, and virsh are conservative estimates from upstream docs and common configurations — not benched here. PRs welcome if you want to wire one of those up the same way docker-sshd is.
-- Cells marked "varies" depend on user choices that fall outside the comparison's scope (e.g. base image choice for virsh).
+- All measured medians come from real CI / hardware:
+  - **GH `ubuntu-latest` KVM (x86_64)**: aq cold, aq live, docker-sshd, podman-sshd, virsh. `.github/workflows/bench-vs-docker-sshd.yml` + `bench-vs-virsh.yml` drive `tests/bench-*.sh` on the same runner.
+  - **Apple M3 HVF (aarch64)**: aq cold, macpine. Local-machine measurements with the same 100 ms probe cadence; not in CI because GH `macos-latest` is itself a VM and doesn't expose Hypervisor.framework.
+- Container benches probe via TCP-accept on the bridged host port (which iptables only forwards once the container's sshd is bound). VM benches that use QEMU user-mode networking probe via *real SSH handshake* — TCP-accept on a QEMU SLIRP hostfwd lights up the moment QEMU starts (long before guest sshd is ready), so a `nc -z` probe would record nonsense (~50 ms regardless of guest state). The macpine bench learned this the hard way.
+- **OrbStack** isn't measured because (a) it requires GUI license acceptance on first run, so it can't be driven headless in CI, and (b) the only hosted macOS runner available without paying for the "large" tier has no nested virt, so even if we could automate setup the numbers would be TCG-emulation, not HVF. The "sub-second (claimed)" cell is the upstream marketing claim — no independent measurement.
+- **`virsh` first-boot cloud-init** runs once in the prelude (untimed). The timed loop is `virsh start` → SSH-accept on the DHCP-assigned guest IP; cloud-init caches its provisioning state so subsequent boots skip it.
+- **`aq_live` on M3 HVF** can't be measured today because of an upstream QEMU 11.0.0 regression in ARM-target migration. See the surrounding text.
+- Cells marked "varies" or italicised depend on user choices outside the comparison's scope.
