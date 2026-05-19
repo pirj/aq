@@ -62,11 +62,13 @@ fi
 echo "==> building qemu-system-aarch64"
 ninja -C build qemu-system-aarch64
 
-# Verify the binary is the patched one.
+# Verify the binary is the patched one. QEMU_TAG already has a leading "v"
+# (e.g. v11.0.0), so the suffix we look for is the bare tag with the
+# git-describe trailer: "(v11.0.0-1-...".
 ver_string=$(./build/qemu-system-aarch64 --version | head -1)
 echo "==> $ver_string"
 case "$ver_string" in
-  *"(v$QEMU_TAG-"*)
+  *"($QEMU_TAG-"*)
     echo "    looks patched (git-suffix in version string)"
     ;;
   *)
@@ -90,7 +92,7 @@ Add the line to your ~/.zshrc (or ~/.bashrc) to make it permanent.
 Then verify:
 
   which -a qemu-system-aarch64
-  qemu-system-aarch64 --version           # expect a (v$QEMU_TAG-...) suffix
+  qemu-system-aarch64 --version           # expect a ($QEMU_TAG-...) suffix
 HINT
 else
   echo "==> $BIN_DIR already on PATH; new shells will pick up the patched binary"
