@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Micro-benchmark: time `docker run -d panubo/docker-sshd` to the moment
-# the container's sshd accepts a TCP connection on the forwarded host port.
+# Micro-benchmark: time `docker run -d panubo/sshd` to the moment the
+# container's sshd accepts a TCP connection on the forwarded host port.
+# (The GitHub repo is panubo/docker-sshd; the Docker Hub image is named
+# panubo/sshd — a panubo naming convention.)
 #
 # Usage:
 #   tests/bench-docker-sshd.sh [-n RUNS] [-l LABEL]
@@ -19,7 +21,7 @@
 set -eu
 set -o pipefail
 
-IMAGE="${IMAGE:-panubo/docker-sshd}"
+IMAGE="${IMAGE:-panubo/sshd}"
 RUNS=5
 LABEL="docker_sshd"
 PROBE_INTERVAL="${AQ_SSH_PROBE_INTERVAL:-0.1}"

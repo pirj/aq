@@ -1,4 +1,4 @@
-name: Bench (aq vs panubo/docker-sshd)
+name: Bench (aq vs panubo/sshd)
 
 on:
   push:
@@ -73,16 +73,18 @@ jobs:
           ./aq stop _warmup
           ./aq rm _warmup
 
-      - name: Pull panubo/docker-sshd
+      - name: Pull panubo/sshd
+        # Image is panubo/sshd on Docker Hub (the GitHub repo is named
+        # panubo/docker-sshd by their convention; the image is shorter).
         # Pre-pull so the timed runs measure warm-cache `docker run` only,
         # to match the way the aq bench measures warm `aq start` (not the
         # one-time per-size base build).
-        run: docker pull panubo/docker-sshd
+        run: docker pull panubo/sshd
 
       - name: bench — aq warm aq new+start
         run: bash tests/bench-aq-start.sh -n "$RUNS" -l aq | tee -a bench.tsv
 
-      - name: bench — panubo/docker-sshd run-to-ssh-ready
+      - name: bench — panubo/sshd run-to-ssh-ready
         run: bash tests/bench-docker-sshd.sh -n "$RUNS" -l docker_sshd | tee -a bench.tsv
 
       - name: Summary

@@ -2,7 +2,7 @@
 
 This doc is for "I need a clean Linux somewhere — what's the trade-off vs Docker / Podman / macpine / OrbStack / virsh?". It frames the comparison around the simplest equivalent of what aq does: a one-shot SSH-reachable Linux that you can drop into and run commands.
 
-The roadmap calls out [`panubo/docker-sshd`](https://github.com/panubo/docker-sshd) as the canonical container-side analog — an Alpine image with `sshd` baked in. Most of the comparison treats *that* as the Docker-side reference, not "Docker in general", because aq is "single Linux you ssh into", not "twelve microservices in a compose file".
+The roadmap calls out [`panubo/sshd`](https://github.com/panubo/docker-sshd) (GitHub repo is `panubo/docker-sshd`; Docker Hub image is `panubo/sshd`) as the canonical container-side analog — an Alpine image with `sshd` baked in. Most of the comparison treats *that* as the Docker-side reference, not "Docker in general", because aq is "single Linux you ssh into", not "twelve microservices in a compose file".
 
 ## TL;DR
 
@@ -19,7 +19,7 @@ aq is in the "system container" lane: every instance has its own kernel, its own
 
 ## At-a-glance comparison
 
-| | **aq** | panubo/docker-sshd | plain Docker | Podman | macpine | OrbStack | virsh/libvirt |
+| | **aq** | panubo/sshd | plain Docker | Podman | macpine | OrbStack | virsh/libvirt |
 |---|---|---|---|---|---|---|---|
 | Type | Full VM (QEMU) | OCI container | OCI container | OCI container | Full VM (QEMU) | Full VM + container runtime | Full VM (QEMU/KVM) |
 | Guest kernel | own | shared host | shared host | shared host | own | own (shared Linux VM) | own |
@@ -45,13 +45,13 @@ Where a row is concrete it's measured or quoted from upstream; where it's "varie
 
 ### Disk footprint
 
-Containers win comfortably. `panubo/docker-sshd` is roughly 13 MB compressed (Alpine + openssh-server + a handful of busybox extras). aq's size-2G base hovers around 130–200 MB because it carries a real kernel, a real init system (OpenRC), and a real userland that mounts a real ext4 root.
+Containers win comfortably. `panubo/sshd` is roughly 13 MB compressed (Alpine + openssh-server + a handful of busybox extras). aq's size-2G base hovers around 130–200 MB because it carries a real kernel, a real init system (OpenRC), and a real userland that mounts a real ext4 root.
 
 That said, the *delta per instance* is similar: both rely on copy-on-write. aq's per-VM `storage.qcow2` typically stays under 200 MB until you actually fill it; Docker's per-container writable layer behaves the same.
 
 ### Cold start time
 
-- **`panubo/docker-sshd`**: `docker run -d -p :22 panubo/docker-sshd` is ~1–2 s assuming the image is already pulled. Pulling for the first time adds ~3–5 s on a fast connection.
+- **`panubo/sshd`**: `docker run -d -p :22 panubo/sshd` is ~1–2 s assuming the image is already pulled. Pulling for the first time adds ~3–5 s on a fast connection.
 - **aq cold first build per size**: ~30 s — Alpine ISO install + kernel/initramfs extraction. Caches per `(version, arch, size)`, so it's one-time per size.
 - **aq warm `aq new && aq start`**: ~4 s (M3) / ~7 s (GH ubuntu-latest KVM) measured.
 - **virsh / libvirt**: depends entirely on the source image. With cloud-init on a stock Alpine cloud image, expect ~5–10 s; first-run includes cloud-init network setup, account provisioning, etc.
@@ -69,7 +69,7 @@ aq, macpine, OrbStack, virsh all run a *separate* Linux kernel under the hypervi
 Both containers and aq let you pass options at start time. The shapes differ:
 
 - aq: `aq new --size=8G --memory=4G -p 8080:80 my-vm`
-- docker-sshd: `docker run -d --memory=4g -v $PWD/keys:/etc/authorized_keys:ro -p 8080:80 panubo/docker-sshd`
+- docker-sshd: `docker run -d --memory=4g -v $PWD/keys:/etc/authorized_keys:ro -p 8080:80 panubo/sshd`
 
 Disk size for aq is fixed at base-build time per size; you can pick any `--size=NG` and aq will build it once. Docker images are not size-aware at start — the writable layer can grow until the host disk fills.
 
