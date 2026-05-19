@@ -1,0 +1,117 @@
+name: Bench (aq vs panubo/docker-sshd)
+
+on:
+  push:
+    paths:
+      - aq
+      - tests/bench-aq-start.sh
+      - tests/bench-docker-sshd.sh
+      - .github/workflows/bench-vs-docker-sshd.yml
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per side"
+        default: "10"
+        required: false
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RUNS: ${{ github.event.inputs.runs || '10' }}
+      AQ_SSH_PROBE_INTERVAL: "0.1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM access for runner user
+        run: |
+          ls -l /dev/kvm
+          sudo chmod 666 /dev/kvm
+          [ -r /dev/kvm ] && [ -w /dev/kvm ]
+
+      - name: Restore apt cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: aq-ci-apt-noble-v3
+          restore-keys: aq-ci-apt-noble-
+
+      - name: Install aq deps
+        run: |
+          sudo chmod -R a+r /var/cache/apt/archives 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils socat ovmf \
+            wget gpg ca-certificates coreutils \
+            meson ninja-build pkg-config liblua5.4-dev libinih-dev libglib2.0-dev \
+            git build-essential netcat-openbsd
+
+      - name: Restore tio
+        id: tio-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/tio
+          key: aq-ci-tio-v3.9-noble
+
+      - name: Build tio
+        if: steps.tio-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v3.9 https://github.com/tio/tio.git /tmp/tio
+          cd /tmp/tio && meson setup build && meson compile -C build && sudo meson install -C build
+
+      - name: Add SSH key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Pre-build aq base
+        run: |
+          ./aq new --size=2G _warmup
+          ./aq start _warmup
+          ./aq stop _warmup
+          ./aq rm _warmup
+
+      - name: Pull panubo/docker-sshd
+        # Pre-pull so the timed runs measure warm-cache `docker run` only,
+        # to match the way the aq bench measures warm `aq start` (not the
+        # one-time per-size base build).
+        run: docker pull panubo/docker-sshd
+
+      - name: bench — aq warm aq new+start
+        run: bash tests/bench-aq-start.sh -n "$RUNS" -l aq | tee -a bench.tsv
+
+      - name: bench — panubo/docker-sshd run-to-ssh-ready
+        run: bash tests/bench-docker-sshd.sh -n "$RUNS" -l docker_sshd | tee -a bench.tsv
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## aq vs panubo/docker-sshd — same runner, same probe granularity"
+            echo
+            echo "QEMU: \`$(qemu-system-x86_64 --version | head -1)\`"
+            echo "Docker: \`$(docker --version)\`"
+            echo "Host: \`$(uname -srvm)\`"
+            echo
+            echo "| target | min | median | max | n |"
+            echo "|---|---|---|---|---|"
+            grep '^summary' bench.tsv | while IFS=$'\t' read -r tag label data; do
+              min=$(echo "$data" | sed -E 's/.*min=([0-9]+)ms.*/\1/')
+              med=$(echo "$data" | sed -E 's/.*median=([0-9]+)ms.*/\1/')
+              max=$(echo "$data" | sed -E 's/.*max=([0-9]+)ms.*/\1/')
+              n=$(echo "$data"   | sed -E 's/.*n=([0-9]+).*/\1/')
+              echo "| $label | ${min}ms | ${med}ms | ${max}ms | $n |"
+            done
+            echo
+            echo "**aq**: \`aq new --size=2G\` + \`aq start\` measured wall-clock; full kernel boot, OpenRC, sshd ready."
+            echo "**panubo/docker-sshd**: \`docker run -d -p :22 panubo/docker-sshd\` + ssh probe; image pre-pulled, shared host kernel."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bench.tsv
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-vs-docker-sshd
+          path: bench.tsv
