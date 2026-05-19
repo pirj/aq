@@ -81,8 +81,8 @@ Where it *would* matter is converting the base from `.raw` to `qcow2` with `-c -
 
 - [ ] alpemu.dev — starts with full-screen terminal, basic commands to start a machine, run something on it, and then more terminals spawn and like a few dozen. on scroll
 - [ ] can be used as a backend for containers.dev? https://github.com/microsoft/vscode-remote-try-rust/blob/main/.devcontainer/devcontainer.json
-- [ ] benchmarks/feature rundown vs Docker/Macpine/OrbStack/Podman/Virsh
-  - [ ] https://github.com/panubo/docker-sshd Directly compare size, performance, isolation, configurability, reproducibility, horizontal scalability (more same machines), sharing data, startup time. Features: snapshots, overlays. Docker is an app container. aq is a system container
+- [x] benchmarks/feature rundown vs Docker/Macpine/OrbStack/Podman/Virsh — shipped in `docs/comparison.md` (structured table across size / cold+warm start / isolation / configurability / reproducibility / horizontal scalability / data sharing / snapshot+overlay support / networking / platforms / daemon+rootless / licensing).
+  - [x] **Measured aq vs `panubo/sshd`** on the same GH ubuntu-latest KVM runner, n=10, 100 ms probe: aq warm `aq new`+`aq start` median **5368 ms** vs docker-sshd `docker run`-to-TCP-accept median **113 ms** — ~47× gap, the cost of full kernel isolation end-to-end. Bench is automated: `.github/workflows/bench-vs-docker-sshd.yml`, sources `tests/bench-docker-sshd.sh` + `tests/bench-aq-start.sh`.
 
 ### Already declined
 

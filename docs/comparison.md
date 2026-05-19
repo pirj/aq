@@ -26,7 +26,7 @@ aq is in the "system container" lane: every instance has its own kernel, its own
 | Host platforms | macOS-aarch64, Linux-x86_64 | anywhere Docker runs | anywhere Docker runs | Linux + macOS via VM | macOS only | macOS only | Linux only |
 | Default image size | ~150 MB (Alpine + linux-virt) | ~13 MB (Alpine + openssh) | varies | varies | similar to aq | ~50 MB shared rootfs | depends on cloud image |
 | Cold first start | ~30 s (per-size base build) | <1 s (after `docker pull`) | <1 s | <1 s | ~30–60 s | ~2–5 s | varies |
-| Warm subsequent start | **~4 s (M3) / ~7 s (GH KVM)** measured | ~1–2 s | ~1–2 s | ~1–2 s | ~5–10 s | sub-second | ~5–10 s |
+| Warm subsequent start | **~4 s (M3) / ~5.4 s (GH KVM)** measured | **113 ms (GH KVM)** measured | ~1–2 s | ~1–2 s | ~5–10 s | sub-second | ~5–10 s |
 | Snapshot (cold) | yes; raw+qcow2 chain | image commit (heavier) | image commit | image commit | no first-class | yes | qcow2 internal |
 | Snapshot (live, w/ memory) | yes (v2.2.0) | no (would need CRIU) | CRIU possible, fiddly | CRIU possible | no | no | yes (savevm) |
 | Fan out N from one state | `aq fanout TAG N -- cmd` | image+exec | image+exec | image+exec | no first-class | no | manual |
@@ -49,12 +49,22 @@ Containers win comfortably. `panubo/sshd` is roughly 13 MB compressed (Alpine + 
 
 That said, the *delta per instance* is similar: both rely on copy-on-write. aq's per-VM `storage.qcow2` typically stays under 200 MB until you actually fill it; Docker's per-container writable layer behaves the same.
 
-### Cold start time
+### Cold/warm start time — measured on the same runner
 
-- **`panubo/sshd`**: `docker run -d -p :22 panubo/sshd` is ~1–2 s assuming the image is already pulled. Pulling for the first time adds ~3–5 s on a fast connection.
-- **aq cold first build per size**: ~30 s — Alpine ISO install + kernel/initramfs extraction. Caches per `(version, arch, size)`, so it's one-time per size.
-- **aq warm `aq new && aq start`**: ~4 s (M3) / ~7 s (GH ubuntu-latest KVM) measured.
-- **virsh / libvirt**: depends entirely on the source image. With cloud-init on a stock Alpine cloud image, expect ~5–10 s; first-run includes cloud-init network setup, account provisioning, etc.
+Both numbers below come from the same GitHub `ubuntu-latest` runner with KVM enabled, image pre-warmed (image pulled for Docker; size-2G base pre-built for aq). Each side ran n=10 with the same 100 ms TCP-accept probe cadence. Bench source: `tests/bench-docker-sshd.sh` + `tests/bench-aq-start.sh`, workflow `.github/workflows/bench-vs-docker-sshd.yml`.
+
+| target | min | median | max |
+|---|---|---|---|
+| `aq new --size=2G $v && aq start $v` | 4847 ms | **5368 ms** | 5692 ms |
+| `docker run -d -p :22 panubo/sshd` to TCP-accept | 109 ms | **113 ms** | 191 ms |
+
+**~47× difference on warm path.** That's the cost of full kernel isolation, end to end: QEMU init + kernel boot + OpenRC + sshd ready vs `clone()` + cgroup setup + sshd process spawn. There's no clever tuning that closes this — the container side genuinely has less work to do because the host kernel and most of userspace are already up.
+
+Cold-cold (image pull / base build) is excluded because both sides amortise it indefinitely:
+
+- **aq cold first build per size**: ~30 s. Caches per `(alpine-version, arch, size)`, one-time per size; subsequent same-size `aq new` skips it entirely.
+- **`panubo/sshd` first pull**: ~3–5 s on a fast connection. Cached by Docker; subsequent runs skip it.
+- **virsh / libvirt**: depends on the source image. With cloud-init on a stock Alpine cloud image, expect ~5–10 s warm; first-run includes cloud-init network setup, account provisioning, etc. Not benched here.
 
 For "fastest from zero to interactive shell", containers win. For "fastest once the base is built", aq still has to pay for a kernel boot + OpenRC, so it'll be slower by ~5 s than the best container path. That gap is the price of full kernel isolation.
 
@@ -124,6 +134,7 @@ If "save the running state of this thing and restore it on N machines" is a requ
 
 ## Footnotes & methodology
 
-- All aq numbers are measured on real hardware (M3 / Apple HVF and GH-hosted ubuntu-latest KVM), with the bench harness in `tests/bench-aq-start.sh`. n=10, 100 ms SSH probe granularity, base pre-built.
-- Container numbers above are conservative estimates from common configurations and upstream documentation; an apples-to-apples bench on the same GH runner is tracked separately (see `.github/workflows/bench-vs-docker-sshd.yml` when it lands).
+- aq numbers come from `tests/bench-aq-start.sh` on real hardware: M3 / Apple HVF for the "macOS" column and GH-hosted ubuntu-latest KVM for the "GH KVM" column. n=10, 100 ms TCP-accept probe granularity, size-2G base pre-built.
+- The `panubo/sshd` row comes from `.github/workflows/bench-vs-docker-sshd.yml` running `tests/bench-docker-sshd.sh` on the *same* GH runner as the aq column, with the image pre-pulled and the same 100 ms probe cadence — apples-to-apples on the same hardware so the 47× gap reflects boot architecture, not measurement noise.
+- Numbers for plain Docker, Podman, macpine, OrbStack, and virsh are conservative estimates from upstream docs and common configurations — not benched here. PRs welcome if you want to wire one of those up the same way docker-sshd is.
 - Cells marked "varies" depend on user choices that fall outside the comparison's scope (e.g. base image choice for virsh).
