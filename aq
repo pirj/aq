@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.6
+VERSION=2.5.7
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1220,8 +1220,12 @@ aq_start() {
          && "$QEMU_BIN" --version 2>/dev/null | head -1 | grep -qE 'version 11\.0\.0( |$)'; then
         stderr ""
         stderr "Hint: this is the known QEMU 11.0.0 aarch64 HVF live-restore regression."
-        stderr "  See docs/comparison.md / README Troubleshooting for the workaround."
-        stderr "  Upstream fix: https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426"
+        stderr "  Easiest fix — if /opt/homebrew/Cellar/qemu/10.0.3 is still around (left over"
+        stderr "  from a recent brew upgrade), PATH-prepend it:"
+        stderr "    export PATH=\"/opt/homebrew/Cellar/qemu/10.0.3/bin:\$PATH\""
+        stderr "  Otherwise: brew install + use whatever 10.x is currently the latest qemu@10"
+        stderr "  in homebrew-core, or wait for QEMU 11.1.0 to ship the upstream fix."
+        stderr "  See README Troubleshooting for details."
       fi
       exit 1
     fi

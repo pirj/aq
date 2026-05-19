@@ -106,7 +106,7 @@ ERROR:target/arm/machine.c:1045:cpu_pre_load:
 
 Linux KVM x86_64 is unaffected — different cpreg lifecycle.
 
-**Min reproduce** (no aq, pure QEMU, ~70 lines) lives in `tools/qemu-livesave-repro/repro.sh`. Boot a tiny aarch64 guest under HVF, capture memory via QMP `migrate file:...`, spawn a fresh qemu with `-incoming file:...`. The destination qemu dies with the assertion before getting to any aq-managed step.
+**Min reproduce** (no aq, pure QEMU, ~70 lines): boot a tiny aarch64 guest under HVF, capture memory via QMP `migrate file:...`, spawn a fresh qemu with `-incoming file:...`. The destination qemu dies with the assertion before getting to any aq-managed step. (The reproducer script lived under `tools/qemu-livesave-repro/` between v2.5.6 and the one-line `git log` away once the user-facing workaround simplified to "just use QEMU 10.0.3"; recoverable from git history if needed.)
 
 **Root cause** is a two-commit interaction:
 
@@ -122,22 +122,22 @@ The HVF Apple-Silicon path pre-allocates exactly the same field the new assert s
 | qemu | result |
 |---|---|
 | stock brew `v11.0.0` | assertion, qemu dies on `-incoming` |
-| `v11.0.0` + cherry-pick of `06fd39e426` | restore + resume succeed, `aq` bench: **645 ms median** (n=3, 6 ms spread), matches the Linux KVM 680 ms parity |
+| `v11.0.0` + cherry-pick of `06fd39e426` (rebuilt locally) | restore + resume succeed, `aq` bench: **645 ms median** (n=3, 6 ms spread), matches the Linux KVM 680 ms parity |
+| brew Cellar `qemu/10.0.3` (predates the assertion) | restore + resume succeed, `aq` bench: **654 ms median** (n=3) — equivalent to the patched 11.0.0 result, no rebuild needed |
 
 User-facing landing in aq:
 
-- [x] Min reproduce extracted from aq into a 70-line script that uses pure qemu (no aq, no disk).
-- [x] Verified the regression is QEMU-side, not aq-side (cherry-pick + rebuild fixes it without any aq change).
-- [x] aq surfaces the QEMU 11.0.0 / darwin / aarch64 combination with a hint pointing at the workaround instead of letting the user puzzle through "Incoming migration did not apply after 300 polls".
-- [x] README Troubleshooting documents two workarounds: (a) PATH-prepend the pre-existing `/opt/homebrew/Cellar/qemu/10.0.3` keg if `brew upgrade` left it around — no build, identical performance (~654 ms median on M3, n=3); (b) build patched v11.0.0 via `install-patched-qemu.sh` if 10.0.3 isn't on the Cellar.
+- [x] Min reproduce written: 70-line script that uses pure qemu (no aq, no disk).
+- [x] Verified the regression is QEMU-side, not aq-side (downgrade or cherry-pick + rebuild both fix it without any aq change).
+- [x] aq surfaces the QEMU 11.0.0 / darwin / aarch64 combination with a hint pointing at the QEMU 10.0.3 PATH-prepend workaround, instead of letting the user puzzle through "Incoming migration did not apply after 300 polls".
+- [x] README Troubleshooting documents the workaround: PATH-prepend the pre-existing `/opt/homebrew/Cellar/qemu/10.0.3` keg if `brew upgrade` left it around (no build, identical performance ~654 ms median on M3). The patched-build path existed briefly as `tools/qemu-livesave-repro/` (v2.5.6 only) and was removed once 10.0.3 was confirmed to be a drop-in workaround — too much carrying cost for a path no one would actually pick.
 - [ ] **When QEMU 11.1.0 ships in homebrew-core** (or earlier if `06fd39e426` gets backported to stable-11.0 and a 11.0.x release picks it up):
   - Drop the avoid-11.0 warning from `README.md` (the callout block in Install + the macOS row in "When *not* to use aq" + the Troubleshooting subsection)
-  - Remove `tools/qemu-livesave-repro/` entirely (`repro.sh`, `verify-fix.sh`, `install-patched-qemu.sh`, the bundled patch, the README) — pure carrying cost once the fix is in tagged QEMU
   - Drop the `(darwin, aarch64, qemu==11.0.0)` hint branch in `aq_start`'s migration-failure path
   - Bump aq's effective minimum QEMU to the fixed release in `CHANGELOG.md` / formula caveats
   - Confirm `tests/live-snapshots.sh` passes locally on macOS HVF with the new QEMU
 
-`tests/live-snapshots.sh` still passes on Linux KVM CI (which is unaffected) and would fail on macOS HVF; the conditional skip is a follow-up nicety, not a blocker.
+`tests/live-snapshots.sh` still passes on Linux KVM CI (which is unaffected) and would fail on macOS HVF only on QEMU 11.0.0; the conditional skip is a follow-up nicety, not a blocker.
 
 ### Deferred from spec reviews
 

@@ -68,12 +68,12 @@ Two benches on two pieces of hardware. Each ran the same `aq` script side by sid
 | target | min | **median** | max | vs `aq_cold` |
 |---|---|---|---|---|
 | `aq_cold` — `aq new --size=2G` + `aq start` | 3940 ms | **4163 ms** | 4383 ms | 1× (baseline) |
-| `aq_live` (HVF, **patched** QEMU v11.0.0 + upstream fix `06fd39e426`) [n=3] | 645 ms | **645 ms** | 651 ms | **~6.5× faster** |
-| `aq_live` (HVF, stock brew QEMU 11.0.0) | — | *fails — upstream ARM regression* | — | n/a |
+| `aq_live` (HVF, QEMU **10.0.3** — the brew keg left behind after 11.0.0 upgrade) [n=3] | 652 ms | **654 ms** | 657 ms | **~6.4× faster** |
+| `aq_live` (HVF, stock brew QEMU 11.0.0) | — | *fails — upstream ARM regression in 11.0.0 only* | — | n/a |
 | `macpine_start` — `alpine launch` + warm-up, then loop `alpine start <vm>` | 14401 ms | **18461 ms** | 18606 ms | ~4.4× *slower* |
 | OrbStack | — | *no CI path; published sub-second figure not independently verified* | — | n/a here |
 
-The patched-QEMU live-restore row is interesting: **645 ms on M3 HVF beats the 680 ms on GH Linux KVM** — same fix unblocks parity across both backends. See `tools/qemu-livesave-repro/` for the reproducer + patch.
+The HVF live-restore row matters: **654 ms on M3 HVF (QEMU 10.0.3) lines up with the 680 ms on GH Linux KVM** — the regression in QEMU 11.0.0 is the only thing blocking parity, and dropping back to 10.0.3 closes the gap end-to-end while we wait for QEMU 11.1.0. See README Troubleshooting for the one-line PATH override.
 
 Source: `.github/workflows/bench-vs-docker-sshd.yml`, `bench-vs-virsh.yml`, and the `tests/bench-*.sh` scripts. M3 numbers are local-machine measurements.
 

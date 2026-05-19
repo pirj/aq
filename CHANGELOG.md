@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.5.7 "Just downgrade" 2026-05-19
+
+### Simplified macOS QEMU 11.0.0 workaround
+
+Turns out `brew upgrade qemu` leaves the previous keg in `/opt/homebrew/Cellar/qemu/` until `brew cleanup` runs, so most macOS Apple Silicon users hitting the v2.5.6 live-restore regression already have a working QEMU 10.0.3 sitting on disk that predates the v11.0.0-rc0 assertion. A single `PATH=/opt/homebrew/Cellar/qemu/10.0.3/bin:$PATH` is faster and less risky than building a patched 11.0.0 from source.
+
+- **Removed `tools/qemu-livesave-repro/`** (the reproducer, the patch, the verify-fix script, the install-patched-qemu installer, and the README). They were carrying cost for a path no one would actually pick over the keg-downgrade. The RCA writeup stays in `ROADMAP.md`; the scripts are recoverable from git history if needed.
+- **`aq_start` hint** for the (darwin, aarch64, qemu==11.0.0) case now points at the QEMU 10.0.3 PATH-prepend recipe instead of the patched-build instructions.
+- **README ⚠ callout** in Install simplified to "stay on QEMU 10.x until 11.1.0 ships", with the one-line PATH override. Troubleshooting subsection collapsed from two workarounds to one.
+- **`docs/comparison.md` HVF row** now references the QEMU 10.0.3 measurement (median 654 ms, n=3 on M3) instead of the patched 11.0.0 build.
+
+No code-path changes in aq itself — the hint message string is the only diff.
+
 ## 2.5.6 "Patch in hand" 2026-05-19
 
 ### UX

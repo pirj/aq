@@ -121,7 +121,7 @@ The tap lives at https://github.com/pirj/homebrew-aq.
 > qemu-system-aarch64 --version                         # expect "version 10.0.3"
 > ```
 >
-> If your Cellar only has `11.0.0` (a clean install), the fallback is to build a patched binary via `tools/qemu-livesave-repro/install-patched-qemu.sh`. Full RCA + both recipes in Troubleshooting below.
+> If your Cellar doesn't have a 10.x keg (clean install, or `brew cleanup` ran), wait for QEMU `11.1.0` to land in homebrew-core — it'll carry the upstream fix. Cold snapshots keep working in the meantime. Full RCA in Troubleshooting below.
 
 #### Linux (Debian/Ubuntu) without Homebrew
 
@@ -235,9 +235,9 @@ aq surfaces this as `Error: incoming migration did not complete` plus a hint poi
 
 **Upstream fix**: [`06fd39e426`](https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426) (on `master`, post-v11.0.0) — six lines, removes the HVF pre-allocation. Not yet in any tagged release.
 
-**Workaround #1 — downgrade to QEMU 10.0.3** (preferred if you have it):
+**Workaround — stay on QEMU 10.x until 11.1.0 ships**:
 
-`brew upgrade` doesn't delete the previous keg, so right after upgrading from QEMU 10.x → 11.0.0 you'll still find the older keg under `/opt/homebrew/Cellar/qemu/10.0.3`. QEMU 10.0.3 doesn't have the assertion (it was added in `v11.0.0-rc0`) and gives identical aq live-restore numbers (~650 ms median on M3, n=3 — within noise of the patched 11.0.0's 645 ms).
+`brew upgrade` doesn't delete the previous keg, so right after upgrading from QEMU 10.x → 11.0.0 you'll still find the older keg under `/opt/homebrew/Cellar/qemu/10.0.3`. QEMU 10.0.3 doesn't have the assertion (it was added in `v11.0.0-rc0`) and gives identical aq live-restore numbers (median **654 ms** on M3 HVF, n=3 — within noise of the Linux KVM 680 ms parity).
 
 ```sh
 ls /opt/homebrew/Cellar/qemu                            # need to see 10.0.3 here
@@ -246,27 +246,11 @@ export PATH="/opt/homebrew/Cellar/qemu/10.0.3/bin:$PATH"
 qemu-system-aarch64 --version                           # expect "version 10.0.3"
 ```
 
-PATH override is non-invasive — brew's symlink farm in `/opt/homebrew/bin` still points at 11.0.0, so `brew upgrade qemu` later still works normally. Once QEMU 11.1.0 lands you just drop the override.
+PATH override is non-invasive — brew's symlink farm in `/opt/homebrew/bin` still points at 11.0.0, so `brew upgrade qemu` later still works normally. Once QEMU 11.1.0 lands you just drop the override and `brew upgrade qemu`.
 
-**Workaround #2 — build patched 11.0.0** (if your Cellar only has 11.0.0):
+If your Cellar doesn't have a 10.x keg (clean install, or `brew cleanup` already ran), there's no in-place fix — wait for QEMU 11.1.0. Cold snapshots, fanout from cold tags, and everything that doesn't use `--from-snapshot=<live-tag>` keep working on 11.0.0.
 
-aq ships a one-shot installer that builds the patched binary and symlinks it under `~/.local/bin`:
-
-```sh
-bash tools/qemu-livesave-repro/install-patched-qemu.sh
-export PATH="$HOME/.local/bin:$PATH"     # add to ~/.zshrc to keep it
-qemu-system-aarch64 --version            # expect "(v11.0.0-1-...)"
-```
-
-The script clones QEMU `v11.0.0`, applies `tools/qemu-livesave-repro/0001-hvf-stop-prealloc-cpreg-vmstate.patch` (the upstream fix exported as a patch), configures with `--target-list=aarch64-softmmu --enable-hvf`, builds, and symlinks. Re-running it is safe — it skips clone/configure/build when the tree already has the expected commit and binary.
-
-Either way, `aq new --from-snapshot=<live-tag>` resumes in ~700 ms — same as Linux KVM.
-
-If you'd rather do it by hand: see `tools/qemu-livesave-repro/README.md` for the step-by-step + the `verify-fix.sh` end-to-end test.
-
-The aq project's own bench measures **645 ms median live-restore** on M3 HVF with the patched QEMU — matching the Linux KVM number, confirming the fix unblocks the macOS path entirely.
-
-Stable-branch status as of writing: the fix is on `master` only; `stable-11.0` hasn't picked it up, so a hypothetical 11.0.1 cut from `stable-11.0` would still have the bug. Naturally lands in **QEMU 11.1.0**. If you want it backported sooner, email `qemu-stable@nongnu.org` requesting `06fd39e426` for stable-11.0.
+Stable-branch status as of writing: the fix [`06fd39e426`](https://gitlab.com/qemu-project/qemu/-/commit/06fd39e426) is on `master` only; `stable-11.0` hasn't picked it up. Naturally lands in **QEMU 11.1.0**. If you want it backported sooner, email `qemu-stable@nongnu.org` requesting `06fd39e426` for stable-11.0.
 
 ### Linux: `aq start` errors with "KVM is required"
 
