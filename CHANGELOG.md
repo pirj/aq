@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.5.5 "Migrate" 2026-05-19
+
+### Bug fixes
+
+- **`qmp_wait_migrate_incoming`: pattern matched `paused (inmigrate)` as if migration were complete.** The `*'VM status: paused'*` case in the bash `case` statement also swallowed `paused (inmigrate)`, so `aq start --from-snapshot=<live-tag>` could send `cont` to QEMU before the incoming migration finished. Latent on Linux KVM because migration completes faster than the 200 ms poll interval (poll usually catches the post-migrate state); reproducible on macOS aarch64 HVF where ARM migration is slower. Put the `(inmigrate)` case first — bash picks the first match.
+
+### New benches
+
+- **`tests/bench-aq-from-live-snapshot.sh`** — provisions a VM once, snapshots it live (with memory), then loops `aq new --from-snapshot=<tag>` + timed `aq start` to SSH-accept. Reveals the actual cost of a live restore vs. cold boot.
+- **`tests/bench-podman-sshd.sh`** — mirrors `bench-docker-sshd.sh` against `panubo/sshd` so the two container runtimes are directly comparable.
+- Both wired into `.github/workflows/bench-vs-docker-sshd.yml` (workflow renamed to "Bench (aq vs alternatives — Linux)"; filename unchanged so path triggers stay valid).
+
+### Measured (GH `ubuntu-latest` KVM, n=10, 100 ms probe)
+
+| target | median |
+|---|---|
+| aq cold (new + start)               | **6695 ms** |
+| aq live restore (new --from-snapshot + start) | **680 ms** |
+| docker run panubo/sshd → TCP-accept | 142 ms |
+| podman run panubo/sshd → TCP-accept | 96 ms |
+
+Live restore is **~10× faster than cold boot** and closes the gap to containers from ~47× → ~5×. Updated `docs/comparison.md` with the full table and commentary.
+
+### Known limitation
+
+- **macOS aarch64 HVF + QEMU 11.0.0**: live-snapshot restore fails with an upstream ARM-target assertion (`target/arm/machine.c:1045: cpu_pre_load: !cpu->cpreg_vmstate_indexes`). Cold snapshots are unaffected. Linux x86_64 KVM is unaffected. No aq-side workaround available; tracking through QEMU upstream.
+
 ## 2.5.4 "Probe" 2026-05-19
 
 ### Performance

@@ -51,22 +51,32 @@ That said, the *delta per instance* is similar: both rely on copy-on-write. aq's
 
 ### Cold/warm start time — measured on the same runner
 
-Both numbers below come from the same GitHub `ubuntu-latest` runner with KVM enabled, image pre-warmed (image pulled for Docker; size-2G base pre-built for aq). Each side ran n=10 with the same 100 ms TCP-accept probe cadence. Bench source: `tests/bench-docker-sshd.sh` + `tests/bench-aq-start.sh`, workflow `.github/workflows/bench-vs-docker-sshd.yml`.
+All four numbers below come from the same GitHub `ubuntu-latest` runner with KVM enabled. Both image pulls and the size-2G aq base are pre-warmed. Each side ran n=10 with the same 100 ms TCP-accept probe cadence. Source: `.github/workflows/bench-vs-docker-sshd.yml` + the four `tests/bench-*.sh` scripts.
 
-| target | min | median | max |
-|---|---|---|---|
-| `aq new --size=2G $v && aq start $v` | 4847 ms | **5368 ms** | 5692 ms |
-| `docker run -d -p :22 panubo/sshd` to TCP-accept | 109 ms | **113 ms** | 191 ms |
+| target | min | **median** | max | vs `aq_cold` |
+|---|---|---|---|---|
+| `aq_cold` — `aq new --size=2G` + `aq start` | 6363 ms | **6695 ms** | 7127 ms | 1× (baseline) |
+| `aq_live` — `aq new --from-snapshot=<live-tag>` + `aq start` | 678 ms | **680 ms** | 687 ms | **~10× faster** |
+| `docker_sshd` — `docker run -d -p :22 panubo/sshd` → TCP-accept | 137 ms | **142 ms** | 353 ms | ~47× faster |
+| `podman_sshd` — `podman run -d -p :22 docker.io/panubo/sshd` → TCP-accept | 92 ms | **96 ms** | 815 ms | ~70× faster |
 
-**~47× difference on warm path.** That's the cost of full kernel isolation, end to end: QEMU init + kernel boot + OpenRC + sshd ready vs `clone()` + cgroup setup + sshd process spawn. There's no clever tuning that closes this — the container side genuinely has less work to do because the host kernel and most of userspace are already up.
+Three things worth pointing out:
 
-Cold-cold (image pull / base build) is excluded because both sides amortise it indefinitely:
+1. **aq live-snapshot restore is genuinely sub-second.** 680 ms median, *9 ms spread* across 10 runs — the most stable bench in the table. QEMU's `-incoming` reads the captured memory image straight back into RAM, skipping the whole kernel-boot + OpenRC + sshd-start path. The remaining 680 ms is QEMU init + memory replay + `cont` + the SSH probe round.
+2. **Live snapshots close the cost-of-VM gap from ~47× to ~5×.** Once you've provisioned a VM and snapshotted it running, every subsequent fan-out lands in ~0.7 s — competitive with containers for workflows where you can amortise the provision-once cost. The aq fanout primitive (v2.3.0) does exactly this, spawning N parallel VMs from one live snapshot.
+3. **Podman is a touch faster than Docker** here (96 vs 142 ms median), with one outlier run (815 ms — likely first-run storage initialization). Both run-to-TCP-accept times are dominated by sshd binding to port 22 inside the container, not by the container runtime itself.
 
-- **aq cold first build per size**: ~30 s. Caches per `(alpine-version, arch, size)`, one-time per size; subsequent same-size `aq new` skips it entirely.
-- **`panubo/sshd` first pull**: ~3–5 s on a fast connection. Cached by Docker; subsequent runs skip it.
-- **virsh / libvirt**: depends on the source image. With cloud-init on a stock Alpine cloud image, expect ~5–10 s warm; first-run includes cloud-init network setup, account provisioning, etc. Not benched here.
+Cold-cold (image pull / base build) is excluded from the loop because both sides amortise it indefinitely:
 
-For "fastest from zero to interactive shell", containers win. For "fastest once the base is built", aq still has to pay for a kernel boot + OpenRC, so it'll be slower by ~5 s than the best container path. That gap is the price of full kernel isolation.
+- **aq cold first build per size**: ~30 s. Caches per `(alpine-version, arch, size)`; subsequent same-size `aq new` skips it.
+- **`panubo/sshd` first pull**: ~3–5 s on a fast connection. Cached by the container runtime; subsequent runs skip it.
+- **virsh / libvirt**: not benched here yet; see `.github/workflows/bench-vs-virsh.yml` (TODO).
+
+The takeaway:
+
+- "Fastest from zero to interactive shell": containers (~100 ms).
+- "Fastest once you've provisioned": still containers, but aq's gap collapses to ~5× via live snapshots.
+- "Fastest *and* I want a full kernel + the host kernel not to be exposed to whatever runs inside": aq live restore, no contender in the table.
 
 ### Isolation
 
