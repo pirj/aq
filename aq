@@ -864,9 +864,18 @@ _aq_new_one() {
     local has_memory
     has_memory=$(read_meta "$resolved" has_memory 2>/dev/null || echo false)
     if [ "$has_memory" = "true" ]; then
-      local src="$(snapshot_path "$resolved")/memory.bin"
-      local dst="$BASE_DIR/$vm_name/incoming-memory.bin"
-      ln "$src" "$dst" 2>/dev/null || cp "$src" "$dst"
+      # Prefer the zstd-compressed memory dump when present (saved by a
+      # zstd-enabled snapshot create); aq_start detects the .zst suffix
+      # and feeds QEMU via `-incoming exec:zstd -dc`.
+      local src_zst="$(snapshot_path "$resolved")/memory.bin.zst"
+      local src_plain="$(snapshot_path "$resolved")/memory.bin"
+      if [ -f "$src_zst" ]; then
+        local dst="$BASE_DIR/$vm_name/incoming-memory.bin.zst"
+        ln "$src_zst" "$dst" 2>/dev/null || cp "$src_zst" "$dst"
+      elif [ -f "$src_plain" ]; then
+        local dst="$BASE_DIR/$vm_name/incoming-memory.bin"
+        ln "$src_plain" "$dst" 2>/dev/null || cp "$src_plain" "$dst"
+      fi
     fi
   fi
 }
@@ -1139,13 +1148,32 @@ aq_start() {
 
   HOST_FORWARDS="$(hostfwd $VM_NAME)"
 
-  # If a memory snapshot was staged on aq_new --from-snapshot, ask qemu to
-  # restore from it via the file: migration URI. URI has no spaces, so
-  # ordinary shell word-splitting is fine.
-  local incoming_args=""
-  local incoming_file="$BASE_DIR/$VM_NAME/incoming-memory.bin"
-  if [ -f "$incoming_file" ]; then
-    incoming_args="-incoming file:$incoming_file"
+  # If a memory snapshot was staged on aq_new --from-snapshot (or by an
+  # external orchestrator like rlock writing the file directly into the
+  # VM dir), ask qemu to restore from it.
+  #
+  # Two on-disk forms are supported:
+  #   * incoming-memory.bin.zst — fed via `-incoming exec:zstd -dc <file>`.
+  #     QEMU streams from zstd's stdout; no temp materialisation. zstd
+  #     decompression is multi-core (~1 GB/s aggregate on M3) and runs
+  #     in parallel with QEMU's migration apply.
+  #   * incoming-memory.bin     — fed via the simple `file:` URI.
+  #
+  # `-incoming exec:` takes a single command-line string; the array form
+  # below keeps the space-containing URI as one arg through the qemu
+  # invocation. Empty array on no-incoming expands cleanly under set -u.
+  local -a incoming_args=()
+  local incoming_file_zst="$BASE_DIR/$VM_NAME/incoming-memory.bin.zst"
+  local incoming_file_plain="$BASE_DIR/$VM_NAME/incoming-memory.bin"
+  if [ -f "$incoming_file_zst" ]; then
+    if ! command -v zstd >/dev/null 2>&1; then
+      stderr "Error: $incoming_file_zst present but zstd not installed on the host."
+      stderr "  Either: brew install zstd, or remove the .zst and rely on a plain memory.bin."
+      exit 1
+    fi
+    incoming_args=(-incoming "exec:zstd -dc $incoming_file_zst")
+  elif [ -f "$incoming_file_plain" ]; then
+    incoming_args=(-incoming "file:$incoming_file_plain")
   fi
 
   # Boot mode selection: direct kernel boot is the default (post Phase 2);
@@ -1202,13 +1230,13 @@ aq_start() {
     -display none \
     -parallel none \
     -monitor none \
-    $incoming_args ${AQ_QEMU_EXTRA_ARGS:-}
+    "${incoming_args[@]}" ${AQ_QEMU_EXTRA_ARGS:-}
 
   # qemu started with -incoming sits in inmigrate/paused state. Wait for the
   # migration to apply, then resume the CPU and verify the VM is actually
   # running. Retry cont if needed — sending cont during the final inmigrate
   # → paused transition can no-op in some qemu versions.
-  if [ -n "$incoming_args" ]; then
+  if [ ${#incoming_args[@]} -gt 0 ]; then
     local qmp_sock="$BASE_DIR/$VM_NAME/qmp.sock"
     if ! qmp_wait_migrate_incoming "$qmp_sock"; then
       stderr "Error: incoming migration did not complete; the VM may be in a bad state."
@@ -1244,7 +1272,8 @@ aq_start() {
       stderr "Error: VM did not transition to running after $cont_attempt cont attempts."
       exit 1
     fi
-    rm -f "$incoming_file"
+    # Consumed by qemu — remove both possible forms.
+    rm -f "$incoming_file_plain" "$incoming_file_zst"
   fi
 
   # Set up persistent SSH forwarding before waiting — SSH polling needs it.
@@ -1567,6 +1596,21 @@ aq_snapshot_create() {
 
     stderr "Live snapshot: resuming VM..."
     qmp_hmp "$qmp_sock" 'cont' >/dev/null
+
+    # Compress memory.bin with zstd (multi-threaded). RAM dumps are
+    # very compressible — zero pages, page cache, repeated kernel
+    # structures typically yield 3-5× on real workloads. Save-side
+    # cost is a few seconds on M3; restore-side cost is amortised
+    # across N starts (and is parallel to QEMU's migration apply via
+    # `-incoming exec:zstd -dc`). If zstd is unavailable the plain
+    # memory.bin stays in place and aq_start uses `-incoming file:`
+    # as before.
+    if command -v zstd >/dev/null 2>&1; then
+      stderr "Live snapshot: compressing memory state (zstd)..."
+      zstd -T0 -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
+    else
+      stderr "Live snapshot: zstd not installed — leaving memory.bin uncompressed."
+    fi
 
     has_memory=true
   else

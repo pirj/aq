@@ -43,9 +43,11 @@ if ! grep -q '"has_memory": true' "$SNAPSHOT_DIR/meta.json"; then
   exit 1
 fi
 
-echo "[live] verify memory.bin exists and is non-empty"
-if [ ! -s "$SNAPSHOT_DIR/memory.bin" ]; then
-  echo "[live] FAIL: memory.bin missing or empty"
+echo "[live] verify memory dump exists and is non-empty (either form)"
+# aq compresses memory.bin to memory.bin.zst when zstd is on the host;
+# this test accepts either form so it passes on hosts without zstd too.
+if [ ! -s "$SNAPSHOT_DIR/memory.bin.zst" ] && [ ! -s "$SNAPSHOT_DIR/memory.bin" ]; then
+  echo "[live] FAIL: memory.bin / memory.bin.zst missing or empty"
   ls -la "$SNAPSHOT_DIR"
   exit 1
 fi
@@ -57,9 +59,10 @@ echo "[live] aq stop + rm $SRC_VM"
 echo "[live] aq new --from-snapshot=$TAG $DST_VM"
 "$AQ" new --from-snapshot="$TAG" "$DST_VM"
 
-echo "[live] verify incoming-memory.bin staged"
-if [ ! -s "$HOME/.local/share/aq/$DST_VM/incoming-memory.bin" ]; then
-  echo "[live] FAIL: incoming-memory.bin missing in $DST_VM dir"
+echo "[live] verify incoming-memory dump staged (either form)"
+if [ ! -s "$HOME/.local/share/aq/$DST_VM/incoming-memory.bin.zst" ] \
+   && [ ! -s "$HOME/.local/share/aq/$DST_VM/incoming-memory.bin" ]; then
+  echo "[live] FAIL: incoming-memory.bin / .zst missing in $DST_VM dir"
   ls -la "$HOME/.local/share/aq/$DST_VM/"
   exit 1
 fi
@@ -74,9 +77,10 @@ if [ "$out" != "live-marker-$$" ]; then
   exit 1
 fi
 
-echo "[live] verify incoming-memory.bin was consumed (removed) by aq start"
-if [ -f "$HOME/.local/share/aq/$DST_VM/incoming-memory.bin" ]; then
-  echo "[live] FAIL: incoming-memory.bin still present after start"
+echo "[live] verify incoming-memory dump was consumed (removed) by aq start"
+if [ -f "$HOME/.local/share/aq/$DST_VM/incoming-memory.bin" ] \
+   || [ -f "$HOME/.local/share/aq/$DST_VM/incoming-memory.bin.zst" ]; then
+  echo "[live] FAIL: incoming-memory.bin / .zst still present after start"
   exit 1
 fi
 
