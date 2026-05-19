@@ -1069,9 +1069,18 @@ FIRST
 # Poll SSH until the guest accepts a connection (or time out).
 # Quiet on the warm-boot fast path: only narrates the wait once SSH hasn't
 # come up within ~10s, so a successful start prints just "Started $vm".
+#
+# Probe cadence is 0.5s by default — tight enough that aq start returns
+# within ~half a second of the guest actually being ready. With the prior
+# 2s sleep, warm boots that finished mid-interval paid up to ~2s of dead
+# wait. AQ_SSH_PROBE_INTERVAL overrides if the env wants a different
+# cadence; max_attempts scales with it so the total budget stays ~3 min.
 wait_for_ssh() {
   local vm_name=$1
-  local max_attempts=${2:-90}
+  local probe_interval=${AQ_SSH_PROBE_INTERVAL:-0.5}
+  # 360 * 0.5s = 3 min budget — same wall-clock ceiling as the old
+  # 90 * 2s = 3 min, just with finer resolution.
+  local max_attempts=${2:-360}
   local attempt=0
   local notified=0
   local ssh_port
@@ -1079,20 +1088,22 @@ wait_for_ssh() {
   while [ $attempt -lt $max_attempts ]; do
     if ssh -o StrictHostKeyChecking=no \
            -o UserKnownHostsFile=/dev/null \
-           -o ConnectTimeout=2 \
+           -o ConnectTimeout=1 \
            -o LogLevel=ERROR \
            -p "$ssh_port" root@localhost true 2>/dev/null; then
       [ "$notified" = 1 ] && stderr "SSH ready on $vm_name after $attempt attempts."
       return 0
     fi
     attempt=$((attempt + 1))
-    if [ "$notified" = 0 ] && [ $attempt -ge 5 ]; then
+    # ~10 s with the default 0.5 s cadence — same threshold as before
+    # for the "this is taking a while" notification.
+    if [ "$notified" = 0 ] && [ $attempt -ge 20 ]; then
       stderr "Waiting for SSH on $vm_name (port $ssh_port)..."
       notified=1
     fi
-    # Periodic heartbeat every 10 attempts so CI logs show progress.
-    [ $((attempt % 10)) = 0 ] && stderr "  ...still waiting for SSH ($attempt/$max_attempts)"
-    sleep 2
+    # Periodic heartbeat every ~20 s so CI logs show progress.
+    [ $((attempt % 40)) = 0 ] && stderr "  ...still waiting for SSH ($attempt/$max_attempts)"
+    sleep "$probe_interval"
   done
   stderr "Error: SSH on $vm_name (port $ssh_port) not reachable after $max_attempts attempts."
   stderr "Diagnostics:"
