@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.5.3 "Tidy" 2026-05-19
+
+### Guest base cleanup
+
+The bootstrapped per-size base image now ships tidier:
+
+- **`/etc/motd`** is replaced with an aq-specific banner (the stock Alpine motd suggested running `setup-alpine`, which is misleading once aq has finished the install).
+- **`/root/.ash_history`** is removed at the end of base build so newly minted VMs don't inherit the install session's command history.
+- **`/root/setup.conf`** removal (already in place since v2.4.0) now lives next to the other cleanups as one chained guest-side command.
+
+All three apply to *new* base builds. Existing cached bases keep their current state until rebuilt (`rm ~/.local/share/aq/<arch>/alpine-base-*.raw` to force a rebuild).
+
+### Tests
+
+- New `tests/guest-cleanup.sh` boots a fresh VM and verifies the three cleanups above. Wired into `tests/run.sh` after `skip-fast-boot.sh`.
+
 ## 2.5.2 "Tap" 2026-05-19
 
 ### Distribution

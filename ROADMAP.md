@@ -46,8 +46,8 @@ Flat backlog across all 2.x releases. Items group by theme, not by version — r
 
 These all apply to the bootstrapped per-size base image. They are cosmetic; existing cached bases keep their current state until rebuilt.
 
-- [ ] replace `/etc/motd` (default Alpine motd still suggests running `setup-alpine`)
-- [ ] clean up shell history — `rm ~/.ash_history` at the end of base build
+- [x] replace `/etc/motd` — v2.5.3 writes an aq-specific banner at base-build time. Verified by `tests/guest-cleanup.sh`.
+- [x] clean up shell history — v2.5.3 removes `/root/.ash_history` at the end of base build. Verified by `tests/guest-cleanup.sh`.
 - [-] check what happens to nc -U / tio when uncommenting getty for serial in /etc/inittab — IRRELEVANT: `aq console` switched from serial to SSH long ago (see DECISIONS); getty on serial isn't on any code path.
 - [x] remove `setup.conf` for real — `rm -f /target/root/setup.conf` runs during base bootstrap (v2.4.0 kernel-extract path).
 - [-] also use ext4 for the base's bootfs — IRRELEVANT: direct kernel boot (v2.4.0 default) doesn't mount `/boot` as a separate fs; legacy UEFI path is a fallback only.

@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.2
+VERSION=2.5.3
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -541,22 +541,31 @@ SETUP_CONF_END
     # enough for them to land before we poweroff. If they don't land, the
     # only consequence is a stale /root/setup.conf inside the installed VM —
     # cosmetic, not a functional problem.
+    # Guest-side cleanup applied inside /target before unmount:
+    #   - rm setup.conf and .ash_history (cosmetic; setup.conf can leak
+    #     the SSH pubkey, .ash_history would otherwise carry the install
+    #     session's commands into every guest)
+    #   - replace the stock Alpine /etc/motd (which advertises
+    #     `setup-alpine`) with an aq-specific banner
+    local cleanup
+    cleanup='rm -f /target/root/setup.conf /target/root/.ash_history && printf "Welcome to your aq Alpine VM.\nDocs: https://github.com/pirj/aq\n" > /target/etc/motd'
+
     if [ "$need_extract" = "0" ]; then
-      # Kernel files already cached for this arch — just clean up setup.conf
+      # Kernel files already cached for this arch — just run the cleanup
       # and unmount (matches the pre-extraction behaviour).
-      echo "mkdir -p /target; mount /dev/vda3 /target; rm -f /target/root/setup.conf; umount /target" | socat STDIO UNIX:command.sock
+      echo "mkdir -p /target; mount /dev/vda3 /target; $cleanup; umount /target" | socat STDIO UNIX:command.sock
       sleep 2
     else
       stderr "Extracting kernel + initramfs (one-time per arch, ~10 s)..."
 
-      # Mount the installed rootfs, clean up setup.conf, and stream both
+      # Mount the installed rootfs, run guest-side cleanup, and stream both
       # kernel and initramfs as a single tar over a netcat listener. This
       # uses only the live ISO's base busybox (tar + nc) — no apk add
       # required, no live-ISO repo state assumptions, no foreign packages.
       #
       # `nc -l -p PORT` accepts exactly one connection then exits; the
       # host's `nc localhost PORT` extracts the tar stream.
-      echo "mkdir -p /target && mount /dev/vda3 /target && rm -f /target/root/setup.conf && (cd /target/boot && tar c vmlinuz-virt initramfs-virt | nc -l -p 8080) ; umount /target" \
+      echo "mkdir -p /target && mount /dev/vda3 /target && $cleanup && (cd /target/boot && tar c vmlinuz-virt initramfs-virt | nc -l -p 8080) ; umount /target" \
         | socat STDIO UNIX:command.sock
       sleep 3
 
