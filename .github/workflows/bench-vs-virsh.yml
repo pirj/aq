@@ -59,13 +59,18 @@ jobs:
           # ships nftables and modular netfilter; libvirt may need nft modules
           # loaded before its iptables shim can install NAT rules.
           sudo modprobe nf_nat nf_conntrack 2>/dev/null || true
-          sudo virsh net-start default || {
-            sudo journalctl -u libvirtd --no-pager -n 50
-            sudo virsh net-list --all
-            exit 1
-          }
+          # Start if not already active. libvirtd sometimes auto-starts the
+          # network when its dependencies are present at daemon start.
+          if ! sudo virsh net-info default | grep -q 'Active:.*yes'; then
+            sudo virsh net-start default || {
+              sudo journalctl -u libvirtd --no-pager -n 50
+              sudo virsh net-list --all
+              exit 1
+            }
+          fi
           sudo virsh net-autostart default
           sudo virsh net-list --all
+          sudo virsh net-info default | grep 'Active'
 
       - name: Restore tio
         id: tio-cache
