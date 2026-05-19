@@ -52,22 +52,31 @@ trap 'stat=$?; cleanup; exit $stat' EXIT
 
 echo "# label=$LABEL runs=$RUNS image=$IMAGE port=$SSH_PORT probe=${PROBE_INTERVAL}s macpine=$($MACPINE help 2>&1 | head -1)"
 
+# IMPORTANT: probe via real SSH, not `nc -z`. QEMU user-mode networking
+# binds the host-forwarded port as soon as QEMU starts (long before the
+# guest sshd is ready), so TCP-accept on the host port lights up
+# essentially the moment `alpine start` is invoked. The `alpine exec`
+# wrapper uses macpine's managed key + actual SSH handshake, which only
+# succeeds once the guest sshd accepts auth — that's the real
+# "ready" signal.
+ssh_ready() {
+  "$MACPINE" exec "$VM" 'true' >/dev/null 2>&1
+}
+
 # Prelude: launch and wait for SSH once, then stop.
 echo "# [prelude] launch + first-boot wait"
 "$MACPINE" launch -n "$VM" -d 2G -m 1024 -i "$IMAGE" -s "$SSH_PORT" >/dev/null 2>&1
 
 prelude_deadline=$(( $(date +%s) + 120 ))
-while ! nc -z -w 1 127.0.0.1 "$SSH_PORT" 2>/dev/null; do
+while ! ssh_ready; do
   if [ "$(date +%s)" -gt "$prelude_deadline" ]; then
-    echo "[macpine] FAIL: SSH never came up on $SSH_PORT during prelude" >&2
+    echo "[macpine] FAIL: SSH never came up during prelude (within 2 min)" >&2
     exit 1
   fi
   sleep 0.2
 done
 
 "$MACPINE" stop "$VM" >/dev/null 2>&1
-# Belt-and-suspenders: wait for the port to actually close.
-while nc -z -w 1 127.0.0.1 "$SSH_PORT" 2>/dev/null; do sleep 0.2; done
 
 times_ms=()
 for i in $(seq 1 "$RUNS"); do
@@ -75,9 +84,9 @@ for i in $(seq 1 "$RUNS"); do
   "$MACPINE" start "$VM" >/dev/null 2>&1
 
   deadline=$(( $(date +%s) + 120 ))
-  while ! nc -z -w 1 127.0.0.1 "$SSH_PORT" 2>/dev/null; do
+  while ! ssh_ready; do
     if [ "$(date +%s)" -gt "$deadline" ]; then
-      echo "[macpine] FAIL: SSH never came up on $SSH_PORT in 120s (run $i)" >&2
+      echo "[macpine] FAIL: SSH never came up in 120s (run $i)" >&2
       exit 1
     fi
     sleep "$PROBE_INTERVAL"
@@ -86,7 +95,6 @@ for i in $(seq 1 "$RUNS"); do
   ms=$(( (end_ns - start_ns) / 1000000 ))
 
   "$MACPINE" stop "$VM" >/dev/null 2>&1
-  while nc -z -w 1 127.0.0.1 "$SSH_PORT" 2>/dev/null; do sleep 0.2; done
 
   times_ms+=("$ms")
   printf 'run\t%d\t%s\t%d\tms\n' "$i" "$LABEL" "$ms"
