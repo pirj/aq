@@ -50,10 +50,20 @@ jobs:
 
       - name: Start libvirtd + default network
         run: |
+          set -x
           sudo systemctl enable --now libvirtd
-          sudo virsh net-info default >/dev/null 2>&1 || sudo virsh net-define /usr/share/libvirt/networks/default.xml
-          sudo virsh net-start default 2>/dev/null || true
-          sudo virsh net-autostart default 2>/dev/null || true
+          sudo virsh net-info default >/dev/null 2>&1 \
+            || sudo virsh net-define /usr/share/libvirt/networks/default.xml
+          # Surface net-start failure rather than swallowing it. GH ubuntu-latest
+          # ships nftables and modular netfilter; libvirt may need nft modules
+          # loaded before its iptables shim can install NAT rules.
+          sudo modprobe nf_nat nf_conntrack 2>/dev/null || true
+          sudo virsh net-start default || {
+            sudo journalctl -u libvirtd --no-pager -n 50
+            sudo virsh net-list --all
+            exit 1
+          }
+          sudo virsh net-autostart default
           sudo virsh net-list --all
 
       - name: Restore tio
