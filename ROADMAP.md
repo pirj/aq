@@ -62,21 +62,17 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 - [ ] `.config/aq.toml` for configuring the SSH key?
 - [ ] fwd options: tcp/udp, hostaddr, guestaddr
 
-### QEMU tuning (questions)
+### QEMU tuning
 
-- [?] `aio=native/io_uring` — latter won't work, as it's Linux-only; what's the deal with native?
-- [?] `use cache=none` for normal runs, too?
-- [?] adjust SMP — currently uses the default. is this fine for most cases?
-- [ ] further improve images performance `cluster_size=64k,compression_type=zstd`
+- [-] `aio=native/io_uring` — DECLINED with measurement (see `docs/benchmarks/2026-05-19-aq-start-tuning.md`). Neither beats default `threads`+writeback on warm `aq start`; canonical `aio=io_uring,cache.direct=on` runs ~50 ms slower median. Warm boot is page-cache-dominated, not async-I/O-dominated.
+- [-] `use cache=none` for normal runs, too? — DECLINED with measurement. `cache.direct=on` (== `cache=none` semantics for our reads) costs ~100–200 ms median by bypassing the page cache. Same benchmark doc.
+- [-] adjust SMP — DECLINED with measurement. `-smp 2` is ~300 ms median *slower* than default 1 vCPU because Alpine OpenRC has `rc_parallel=NO`.
+- [ ] further improve images performance `cluster_size=64k,compression_type=zstd` — untested; warm-boot bottleneck isn't disk, but cold builds might benefit.
 
 ### Stability & testing
 
-- [ ] stability improvements. sometimes fails on bootstrap
-        alpine:~# > DISKOPTS="-m sys /dev/vda"
-        -sh: can't create DISKOPTS=-m sys /dev/vda: nonexistent directory
-        alpine:~#
-      takes a while for vm to start and aq console <vm> fails until then
-- [ ] autotests — partial: `tests/` has smoke + snapshots + live-snapshots + fanout + direct-kernel-boot + size-base-catalog + skip-fast-boot + unit-helpers. CI runs them on GH; deeper coverage (snapshot prune, error paths, fanout edge cases) still missing.
+- [x] stability improvements on bootstrap — addressed across the 1.x/2.x line: MVP 1.0 fixed the install race, v2.4.0 dropped the first-boot resize/setup phase entirely (direct kernel boot at full size), v2.5.1 added a clear "VM is not running" guard so `aq console`/`exec` no longer races a half-booted guest. The leftover console-paste example in the previous wording was user error (a stray `>` on the typed command), not an aq bug.
+- [x] autotests — `tests/` now covers smoke + snapshots + live-snapshots + fanout + direct-kernel-boot + size-base-catalog + skip-fast-boot + unit-helpers + guest-cleanup + stopped-vm-guard, all wired through `tests/run.sh` on GH Linux CI. Snapshot prune itself is a deferred feature (see "Base catalog management"), so its absence from tests reflects the absence of the command, not missing coverage.
 
 ### Comparative & marketing
 

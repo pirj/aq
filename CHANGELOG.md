@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.5.4 "Probe" 2026-05-19
+
+### Performance
+
+- **`wait_for_ssh` probe cadence 2 s → 0.5 s** (and `ConnectTimeout` 2 s → 1 s). Warm `aq start` no longer pays up to 2 s of dead-wait between SSH probes when the guest comes up mid-interval. Measured: on GH `ubuntu-latest` Linux/KVM, median `aq start` dropped from ~8 250 ms → ~6 900 ms (n=10) — a ~1.3 s shave per invocation. Total budget unchanged (~3 min, 360 attempts × 0.5 s). New env var `AQ_SSH_PROBE_INTERVAL` lets benchmarks override further.
+
+### Tooling
+
+- **Benchmark harness.** `tests/bench-aq-start.sh` runs warm `aq start` N times, reports min/median/max in ms. Backed by four passthrough env-var hooks in `aq_start` (production VMs leave them unset):
+  - `AQ_DRIVE_EXTRA` — appended to the `-drive` directive
+  - `AQ_QEMU_EXTRA_ARGS` — extra raw QEMU args
+  - `AQ_MACHINE_OVERRIDE` — replaces `$MACHINE_OPTS`
+  - `AQ_KERNEL_APPEND_EXTRA` — extra tokens for `-append`
+- **`Bench (Linux warm aq start)` CI workflow** sweeps a fixed configuration grid on push (when `aq` or the bench script changes) and on workflow_dispatch. Markdown summary on the run page; `bench.tsv` uploaded as an artifact.
+
+### Tests
+
+- **`tests/stopped-vm-guard.sh`** locks in the v2.5.1 guard: `aq console` / `aq exec` (arg + stdin) / `aq scp` against a stopped VM must reject with `is not running` and exit non-zero within seconds, not hang on a refused SSH connect.
+
+### QEMU tuning (DECLINED with data)
+
+Used the new bench infra to settle three lingering questions:
+
+- **`aio=io_uring` / `aio=native`** — neither beats the QEMU defaults (`threads` + writeback cache). Canonical `aio=io_uring,cache.direct=on` is ~50 ms median *slower*; `aio=native,cache.direct=on` ~100 ms slower. Warm boot is page-cache-dominated; async I/O has nothing to speed up.
+- **`cache=none` / `cache.direct=on`** — ~100–200 ms median slower. Bypassing the host page cache is the wrong move for a workload that re-reads the same blocks every boot.
+- **`-smp 2`** — ~300 ms median slower. Alpine OpenRC has `rc_parallel=NO`, so a second vCPU adds coordination overhead without unlocking parallel boot work.
+- **Kernel cmdline `tsc=reliable no_timer_check nokaslr`** — within noise of baseline.
+
+Full data in `docs/benchmarks/2026-05-19-aq-start-tuning.md`. Corresponding roadmap entries moved to declined.
+
 ## 2.5.3 "Tidy" 2026-05-19
 
 ### Guest base cleanup

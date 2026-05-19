@@ -11,3 +11,4 @@ bash tests/direct-kernel-boot.sh
 bash tests/size-base-catalog.sh
 bash tests/skip-fast-boot.sh
 bash tests/guest-cleanup.sh
+bash tests/stopped-vm-guard.sh
