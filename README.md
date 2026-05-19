@@ -48,7 +48,7 @@ aq picks the right backend at runtime via `uname`. Snapshots and per-VM state li
 
 Snapshots are stored under `~/.local/share/aq/snapshots/<arch>/<tag>/` and live in the same architecture as the host. Cold snapshots (created from a stopped VM) capture disk state only; new VMs cold-boot from the snapshot's disk.
 
-**Live snapshots** — when you snapshot a *running* VM, aq also captures the live memory state. Restoring such a snapshot skips Alpine's boot entirely: the kernel, processes, network connections, and tmpfs contents come back as they were at the snapshot moment. SSH is reachable in ~1 s instead of ~12 s.
+**Live snapshots** — when you snapshot a *running* VM, aq also captures the live memory state. Restoring such a snapshot skips Alpine's boot entirely: the kernel, processes, network connections, and tmpfs contents come back as they were at the snapshot moment. Measured: SSH reachable in **~680 ms** (Linux KVM, n=10, see `docs/comparison.md`) instead of ~7 s cold.
 
     aq new myrails
     aq start myrails
@@ -66,6 +66,40 @@ Run N parallel VMs derived from one snapshot, executing a command per shard:
 Each shard receives `AQ_SHARD_INDEX` (0..N-1) and `AQ_SHARD_TOTAL` (=N) in its environment, so a test runner can pick its slice. All shards back onto the same `disk.qcow2` (delta-only writes per shard); if the snapshot has memory state, each shard restores from the same `memory.bin`. Output is multiplexed with a `[shard-<name>]` line prefix, exit code is the max of children's, and shards are torn down after the command finishes (use `--keep` to opt out).
 
 For a finer-grained pipeline you can also use `aq new --from-snapshot=<tag> --count=N <prefix>` to create the fleet and drive it yourself with `aq start`, `aq exec`, `aq stop`, `aq rm`.
+
+### How aq compares to Docker / Podman
+
+The shortest version: **aq is a system container, Docker is an app container.** Different shape, different costs, different wins.
+
+**Where aq is uniquely useful:**
+
+- **Live snapshots with memory.** Provision a non-trivial stack once (apk add, gem install, db:setup, redis warmed, an LLM loaded into RAM, ...), `aq snapshot create` while it's running — every subsequent `aq new --from-snapshot=TAG` resumes from that frozen memory in **~680 ms** (measured, GH Linux KVM, n=10). TCP connections, tmpfs contents, JIT-warmed processes, model weights all come back. Docker's CRIU-based equivalent exists in principle but isn't packaged and isn't reliable across kernel versions.
+- **Fan-out** is the snapshot's natural use case: `aq fanout TAG 8 -- /workload` spins up 8 parallel VMs from one provisioned state with `AQ_SHARD_INDEX`/`AQ_SHARD_TOTAL` in env, each landing in ~1 s. Ideal for parallel test suites where setup cost dwarfs the actual test, or any "I've warmed N GB of memory, give me N copies of it" pattern.
+- **Full kernel isolation.** Each VM has its own Linux kernel under a hypervisor (HVF on macOS aarch64, KVM on Linux x86_64). A guest kernel bug stays in the guest — there is no guest kernel shared with the host. Containers share the host kernel via namespaces+cgroups, which leaks less than people assume but more than VMs. Matters for CI on untrusted PRs, security research, multi-tenant runners, anything you'd be uncomfortable running with `--privileged`.
+- **Provisioning is bash, not a DSL.** No Dockerfile layer cache to invalidate, no `RUN ... && rm -rf /var/lib/apt/lists/*` ritual, no `--target` multi-stage gymnastics. You `aq exec vm` and run real commands; when satisfied, `aq snapshot create`. Once provisioning grows past trivial — an Ansible playbook, a 50-line setup chain, fixtures that depend on the order of previous steps — the gap between "fast iterative debugging" and "Dockerfile build-and-cross-fingers" gets noticeable.
+- **Real Linux init.** OpenRC inside the VM. Run multiple cooperating services (`apk add nginx postgresql redis`, `rc-service * start`) without the one-process-per-container constraint or the orchestration layer it implies.
+- **Persistent storage is the default.** Each VM has its own qcow2 overlay; `aq stop` + `aq start` preserves everything. No "did I forget a volume mount?" failure mode.
+- **No daemon, single bash script.** ~1.8 kloc, MIT-licensed, auditable in an afternoon. No background process, no socket permissions, no commercial-use subscription. Each `aq` invocation is self-contained.
+
+**Where Docker is uniquely useful:**
+
+- **Sub-100 ms cold start.** `docker run -d panubo/sshd` lands in **~142 ms** on the same hardware where aq cold takes ~6.7 s. If you spin up thousands of short-lived workers, that gap dominates.
+- **Declarative reproducibility.** Dockerfile + content-addressed layer cache is unmatched for "byte-identical build on any machine". aq snapshots are state, not a build recipe.
+- **Bind mounts.** `-v $PWD/src:/src` is friction-free for iterative dev loops. aq doesn't expose 9p/virtfs host-share (yet), so host↔guest file sync is `aq scp` round-trips.
+- **Ecosystem.** docker-compose, k8s, registries, image scanners, supply-chain tooling. aq is single-VM-shaped by design.
+
+Full measured comparison (aq vs docker-sshd, podman, virsh, macpine on the same hardware, plus a structured table across size / isolation / configurability / reproducibility / horizontal scalability / data sharing / snapshot+overlay): [`docs/comparison.md`](docs/comparison.md).
+
+### When *not* to use aq
+
+- **You spin up thousands of disposable workers and 6-second cold start hurts.** Containers win; the ~50× gap on cold path isn't closeable. (Snapshots collapse it to ~5× once you've provisioned once — see above — but if you can't amortise the provision, that doesn't help.)
+- **You need Windows or macOS guests.** aq is Alpine-only by design.
+- **Your dev loop lives on `-v $PWD:/src` bind mounts.** aq's SSH-based file sync is friction. 9p/virtfs isn't wired in yet.
+- **You need declarative byte-identical builds shippable to N machines.** Dockerfile + registry is the right tool; aq snapshots are state, not a build manifest.
+- **You need GPU or PCI passthrough.** QEMU can do it, but aq doesn't expose the machinery.
+- **You need k8s, compose, service meshes, multi-host orchestration.** aq is single-VM-shaped; orchestration is out of scope.
+- **macOS aarch64 + live snapshots, right now.** Blocked by an upstream QEMU 11.0.0 ARM migration regression (cold snapshots and Linux KVM live restore both unaffected). Tracking upstream.
+- **Your team is fluent in Docker and isn't hitting its limits.** Switching costs are real. aq's wins matter only if you actually need them — if Docker is fine for your workload, it's fine.
 
 ### Install
 
