@@ -111,6 +111,8 @@ Pulls in `qemu`, `tio`, `socat`, `coreutils`, `wget`, and `gnupg` from brew. On 
 
 The tap lives at https://github.com/pirj/homebrew-aq.
 
+> ⚠ **macOS Apple Silicon: avoid QEMU 11.0.0 if you plan to use live snapshots.** Stock brew currently ships QEMU `11.0.0`, which has an aarch64-HVF regression that asserts on every incoming migration — so `aq new --from-snapshot=<live-tag>` fails. Cold snapshots, fanout from cold tags, and everything else work fine. Linux KVM is unaffected. Workaround until QEMU `11.1.0` lands in brew: run `tools/qemu-livesave-repro/install-patched-qemu.sh` (builds patched binary into `~/.local/bin`), or downgrade to QEMU `10.x`. Full RCA + recipe in Troubleshooting below.
+
 #### Linux (Debian/Ubuntu) without Homebrew
 
     sudo apt-get install -y --no-install-recommends \

@@ -130,7 +130,12 @@ User-facing landing in aq:
 - [x] Verified the regression is QEMU-side, not aq-side (cherry-pick + rebuild fixes it without any aq change).
 - [x] aq surfaces the QEMU 11.0.0 / darwin / aarch64 combination with a hint pointing at the workaround instead of letting the user puzzle through "Incoming migration did not apply after 300 polls".
 - [x] README Troubleshooting documents the cherry-pick + local-build workaround.
-- [ ] Bump aq's QEMU requirement to whatever release actually contains the fix once upstream cuts one (`v11.0.1` / `v11.1.0`). Until then there's nothing to land on the aq side.
+- [ ] **When QEMU 11.1.0 ships in homebrew-core** (or earlier if `06fd39e426` gets backported to stable-11.0 and a 11.0.x release picks it up):
+  - Drop the avoid-11.0 warning from `README.md` (the callout block in Install + the macOS row in "When *not* to use aq" + the Troubleshooting subsection)
+  - Remove `tools/qemu-livesave-repro/` entirely (`repro.sh`, `verify-fix.sh`, `install-patched-qemu.sh`, the bundled patch, the README) — pure carrying cost once the fix is in tagged QEMU
+  - Drop the `(darwin, aarch64, qemu==11.0.0)` hint branch in `aq_start`'s migration-failure path
+  - Bump aq's effective minimum QEMU to the fixed release in `CHANGELOG.md` / formula caveats
+  - Confirm `tests/live-snapshots.sh` passes locally on macOS HVF with the new QEMU
 
 `tests/live-snapshots.sh` still passes on Linux KVM CI (which is unaffected) and would fail on macOS HVF; the conditional skip is a follow-up nicety, not a blocker.
 
