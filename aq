@@ -1600,12 +1600,24 @@ aq_snapshot_create() {
     # Compress memory.bin with zstd (multi-threaded). RAM dumps are
     # very compressible — zero pages, page cache, repeated kernel
     # structures typically yield 3-5× on real workloads. Save-side
-    # cost is a few seconds on M3; restore-side cost is amortised
-    # across N starts (and is parallel to QEMU's migration apply via
-    # `-incoming exec:zstd -dc`). If zstd is unavailable the plain
-    # memory.bin stays in place and aq_start uses `-incoming file:`
-    # as before.
-    if command -v zstd >/dev/null 2>&1; then
+    # cost is a few seconds on M3; restore-side cost is the price of
+    # pipe-based migration via `-incoming exec:zstd -dc`, measured at
+    # ~370 ms on the rails-pg-sample fixture vs `-incoming file:`.
+    #
+    # Trade-off: disk vs warm-restore time.
+    #   * Multi-project laptops: disk savings (~1.1 GB per live layer)
+    #     dominate, since the warm penalty is a one-off per `rl new`.
+    #   * Single-project CI runners that warm-restore the same VM many
+    #     times per cache key: the warm penalty multiplies; the disk
+    #     saving is one-shot. They can opt out with
+    #     AQ_NO_SNAPSHOT_COMPRESS=1 — aq writes plain memory.bin and
+    #     aq_start uses `-incoming file:` (the older fast path).
+    #
+    # If zstd isn't installed, behaves the same as the opt-out: leave
+    # plain memory.bin.
+    if [ "${AQ_NO_SNAPSHOT_COMPRESS:-}" = "1" ]; then
+      stderr "Live snapshot: AQ_NO_SNAPSHOT_COMPRESS=1 — leaving memory.bin uncompressed."
+    elif command -v zstd >/dev/null 2>&1; then
       stderr "Live snapshot: compressing memory state (zstd)..."
       zstd -T0 -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
     else
