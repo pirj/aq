@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.5.8 "Don't poke GRUB" 2026-05-21
+
+### Linux/KVM base-build no longer hangs on Alpine ISO GRUB autoselect
+
+`bootstrap_base_image()` used to send `\n` into the serial console
+*before* waiting for `localhost login:`. On the slow firmware path
+(Linux/KVM + OVMF + Alpine ISO under GH-Actions `ubuntu-latest`,
+~90 s end-to-end) that `\n` landed *during* GRUB's 1-second
+autoselect countdown — GRUB treated it as a keystroke, cancelled the
+autoselect, and sat at the menu indefinitely until the workflow
+timeout fired. macOS/HVF was fast enough that the same `\n` always
+arrived *after* GRUB had handed off to the kernel, so it never
+surfaced locally.
+
+- Drop the pre-emptive `write("\n")` from the wait_for call in
+  `bootstrap_base_image()`. Alpine's serial getty emits the
+  `localhost login:` prompt on its own once spawned; tio is attached
+  long before then, so `expect()` matches the natural prompt
+  without a nudge.
+
+Surfaced by `pirj/bakerish-rails-pg-example` CI validation; isolated
+by a bare-qemu diagnostic workflow that reproduced the boot
+succeeding without tio/socat in the loop. See ROADMAP.md "### Bugs"
+for the full RCA.
+
 ## 2.5.7 "Just downgrade" 2026-05-19
 
 ### Simplified macOS QEMU 11.0.0 workaround

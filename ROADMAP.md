@@ -97,6 +97,42 @@ Where it *would* matter is converting the base from `.raw` to `qcow2` with `-c -
 
 ### Bugs
 
+#### Linux/KVM base-build hangs in Alpine ISO GRUB autoselect — fixed in 2.5.8
+
+Surfaced 2026-05-21 by `pirj/bakerish-rails-pg-example`'s GH Actions
+validation on `ubuntu-latest` runner. tio captured the Alpine ISO
+GRUB menu rendering for 16+ min — the "1 second autoselect" never
+fired.
+
+Discriminated 2026-05-21 by a bare-qemu diagnostic workflow that ran
+`qemu -accel kvm -cpu host -nographic -serial mon:stdio` against the
+same Alpine ISO + OVMF on the same runner, with no tio/socat in the
+loop: GRUB autoselected normally and Alpine booted to the
+`localhost login:` prompt within 90 s. So the hang was not KVM/OVMF
+— it was aq's own input.
+
+Root cause: `bootstrap_base_image()` called
+`wait_for 'write("\n"); expect("localhost login: "); ...'`. The
+leading `write("\n")` was intended as a nudge in case the getty
+prompt had been emitted before tio attached. But tio attaches
+**immediately** after `qemu -daemonize` returns, and on the slow
+firmware path (UEFI + GRUB on Linux/KVM took ~90 s end-to-end), the
+`\n` arrived **during** GRUB's countdown. GRUB treats any keystroke
+during autoselect as "cancel autoselect" — the menu then sat
+forever, `expect("localhost login: ")` never matched.
+
+macOS/HVF wasn't hit because the firmware path is fast enough there
+that GRUB has already autoselected and handed off to the kernel
+before tio's first `write()` fires.
+
+Fix: drop the pre-emptive `\n` from line 460. Alpine's serial getty
+emits `localhost login: ` on its own once spawned; tio is attached
+long before then, so expect() matches the natural prompt without a
+nudge.
+
+Full validation writeup: `../validation-2026-05-21.md` in the umbrella
+repo.
+
 #### Live snapshot restore broken on QEMU 11.0.0 + aarch64 HVF — root-caused, upstream patch identified
 
 Surfaced 2026-05-19 by the isolated live-vs-cold benchmark. `aq new --from-snapshot=<live-tag>` + `aq start` consistently failed on macOS aarch64 HVF with:

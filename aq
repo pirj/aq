@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.7
+VERSION=2.5.8
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -457,7 +457,14 @@ bootstrap_base_image() {
 
     echo Booting up the base VM
 
-    wait_for 'write("\n"); expect("localhost login: "); write("root\n")'
+    # Don't send a leading "\n" here: on slow firmware paths (notably
+    # Linux/KVM + OVMF on GH actions runners) GRUB's "autoselect in 1s"
+    # is still rendering when tio attaches. A stray "\n" cancels the
+    # autoselect, leaving the boot stuck at the menu indefinitely.
+    # Alpine's serial getty emits "localhost login: " on its own once
+    # spawned; tio is attached long before then, so expect() matches
+    # the natural prompt without any nudge.
+    wait_for 'expect("localhost login: "); write("root\n")'
 
     echo  ..done
 
