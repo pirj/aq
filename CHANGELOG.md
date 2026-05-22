@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.5.13 "blkid the rootfs" 2026-05-23
+
+### Cross-arch root-partition detection for kernel/initramfs extraction
+
+After v2.5.12 unstuck the post-login wait_for, Linux/KVM CI got
+through setup-alpine cleanly ("Installation is complete. Please
+reboot.") but then failed at the next phase:
+
+```
+Error: kernel/initramfs extraction produced suspiciously small files (vmlinuz=0, initramfs=0).
+       Tar-over-nc extraction may have failed (nc unreachable, tar contents wrong).
+```
+
+`bootstrap_base_image()` hardcoded `mount /dev/vda3 /target` for
+extracting `vmlinuz-virt` + `initramfs-virt` from the freshly-
+installed rootfs. That works on aarch64 (where setup-disk in sys
+mode produces vda1=ESP, vda2=swap, vda3=root), but x86_64 setup-disk
+can lay the partitions out differently (e.g. with a BIOS-boot
+partition prepended). Mount silently failed, `tar | nc -l` never
+ran, host nc retry-loop got connection-refused for 30 s, files
+were 0 bytes.
+
+- Replace the hardcoded `/dev/vda3` with `blkid -t TYPE=ext4 -o
+  device | head -1` so the extraction lands on whichever device
+  the ext4 root ended up on. Verify `/target/boot/vmlinuz-virt`
+  exists before tar'ing; emit `AQ_EXTRACT_NO_EXT4` /
+  `AQ_EXTRACT_NO_KERNEL` sentinels if not (visible on the serial
+  for future debugging).
+
 ## 2.5.12 "write, actually" 2026-05-23
 
 ### Revert v2.5.11; aq requires tio ≥ 3.8

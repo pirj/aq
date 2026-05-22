@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.12
+VERSION=2.5.13
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -585,12 +585,27 @@ SETUP_CONF_END
 
       # Mount the installed rootfs, run guest-side cleanup, and stream both
       # kernel and initramfs as a single tar over a netcat listener. This
-      # uses only the live ISO's base busybox (tar + nc) — no apk add
-      # required, no live-ISO repo state assumptions, no foreign packages.
+      # uses only the live ISO's base busybox (tar + nc + blkid) — no apk
+      # add required, no live-ISO repo state assumptions, no foreign
+      # packages.
+      #
+      # Root-partition index varies by arch: on aarch64 setup-disk in sys
+      # mode typically lands ext4-root at /dev/vda3 (vda1=ESP, vda2=swap,
+      # vda3=root). On x86_64 the layout can differ (e.g. BIOS-boot
+      # partition prepended) so a hardcoded /dev/vda3 doesn't work
+      # cross-arch. blkid surfaces the ext4 device directly.
       #
       # `nc -l -p PORT` accepts exactly one connection then exits; the
       # host's `nc localhost PORT` extracts the tar stream.
-      echo "mkdir -p /target && mount /dev/vda3 /target && $cleanup && (cd /target/boot && tar c vmlinuz-virt initramfs-virt | nc -l -p 8080) ; umount /target" \
+      echo "set -e
+ROOT=\$(blkid -t TYPE=ext4 -o device 2>/dev/null | head -1)
+[ -z \"\$ROOT\" ] && { echo AQ_EXTRACT_NO_EXT4; exit 1; }
+mkdir -p /target
+mount \"\$ROOT\" /target
+[ -f /target/boot/vmlinuz-virt ] || { echo AQ_EXTRACT_NO_KERNEL; umount /target; exit 1; }
+$cleanup
+(cd /target/boot && tar c vmlinuz-virt initramfs-virt | nc -l -p 8080)
+umount /target" \
         | socat STDIO UNIX:command.sock
       sleep 3
 
