@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.13
+VERSION=2.5.14
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -585,36 +585,54 @@ SETUP_CONF_END
 
       # Mount the installed rootfs, run guest-side cleanup, and stream both
       # kernel and initramfs as a single tar over a netcat listener. This
-      # uses only the live ISO's base busybox (tar + nc + blkid) — no apk
-      # add required, no live-ISO repo state assumptions, no foreign
-      # packages.
+      # uses only the live ISO's base busybox (tar + nc) — no apk add
+      # required, no live-ISO repo state assumptions, no foreign packages.
       #
-      # Root-partition index varies by arch: on aarch64 setup-disk in sys
-      # mode typically lands ext4-root at /dev/vda3 (vda1=ESP, vda2=swap,
-      # vda3=root). On x86_64 the layout can differ (e.g. BIOS-boot
-      # partition prepended) so a hardcoded /dev/vda3 doesn't work
-      # cross-arch. blkid surfaces the ext4 device directly.
+      # Root-partition index varies by arch: aarch64 setup-disk's sys-mode
+      # layout differs from x86_64's (which can include a BIOS-boot
+      # partition shifting the indices). Rather than hardcoding /dev/vdaN,
+      # we mount-trial each /dev/vda* in turn and pick the one that
+      # actually contains /boot/vmlinuz-virt. busybox blkid's
+      # `-t TYPE=ext4` syntax isn't reliable across distros, so this
+      # avoids it.
       #
-      # `nc -l -p PORT` accepts exactly one connection then exits; the
-      # host's `nc localhost PORT` extracts the tar stream.
-      echo "set -e
-ROOT=\$(blkid -t TYPE=ext4 -o device 2>/dev/null | head -1)
-[ -z \"\$ROOT\" ] && { echo AQ_EXTRACT_NO_EXT4; exit 1; }
+      # The guest emits AQ_EXTRACT_READY just before starting `nc -l`. We
+      # wait_for that sentinel from the host (capturing the full serial
+      # stream in the process — visible in stderr for debugging) before
+      # the host-side nc connects. That eliminates the previous 30×1s
+      # blind-retry loop and makes any guest-side failure visible.
+      guest_extract="\
 mkdir -p /target
-mount \"\$ROOT\" /target
-[ -f /target/boot/vmlinuz-virt ] || { echo AQ_EXTRACT_NO_KERNEL; umount /target; exit 1; }
-$cleanup
-(cd /target/boot && tar c vmlinuz-virt initramfs-virt | nc -l -p 8080)
-umount /target" \
-        | socat STDIO UNIX:command.sock
-      sleep 3
+for p in /dev/vda*; do
+  [ -b \"\$p\" ] || continue
+  mount -t ext4 \"\$p\" /target 2>/dev/null || continue
+  if [ -f /target/boot/vmlinuz-virt ]; then
+    echo AQ_EXTRACT_PARTITION=\$p
+    $cleanup
+    echo AQ_EXTRACT_READY
+    cd /target/boot && tar c vmlinuz-virt initramfs-virt | nc -l -p 8080
+    umount /target
+    exit 0
+  fi
+  umount /target 2>/dev/null
+done
+echo AQ_EXTRACT_NO_KERNEL_FOUND
+exit 1"
+      echo "$guest_extract" | socat STDIO UNIX:command.sock
 
-      # Fetch the tar stream from the hostfwd port. Retry briefly so we
-      # don't race nc starting up inside the guest.
+      # Capture the guest serial up to AQ_EXTRACT_READY (or 30 s timeout).
+      # Anything that goes wrong upstream — mount failures, missing
+      # /boot/vmlinuz-virt, etc. — surfaces in the workflow log via
+      # tio's stream because we dropped --mute in v2.5.10.
+      wait_for 'expect("AQ_EXTRACT_READY", 30000)'
+
+      # Fetch the tar stream from the hostfwd port. Just a couple of
+      # quick retries — nc should already be listening because
+      # AQ_EXTRACT_READY fired.
       mkdir -p "$BASE_DIR/$ARCH/wip-extract"
       attempt=0
-      while [ $attempt -lt 30 ]; do
-        if nc -w 60 127.0.0.1 "$extract_port" \
+      while [ $attempt -lt 5 ]; do
+        if nc -w 30 127.0.0.1 "$extract_port" \
            | tar x -C "$BASE_DIR/$ARCH/wip-extract" 2>/dev/null ; then
           [ -f "$BASE_DIR/$ARCH/wip-extract/vmlinuz-virt" ] && \
           [ -f "$BASE_DIR/$ARCH/wip-extract/initramfs-virt" ] && break

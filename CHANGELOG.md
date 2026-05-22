@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.5.14 "mount-trial + handshake" 2026-05-23
+
+### Extraction phase: replace blind retry + blkid syntax with handshake
+
+v2.5.13's blkid-based partition detection didn't actually work
+because busybox `blkid` on Alpine doesn't accept util-linux's
+`-t TYPE=ext4 -o device` query syntax — it only prints raw
+device-attribute lines. So the previous fix silently picked an
+empty ROOT, mount failed, nc -l never started, and the host's
+nc retry loop spent 30 s before giving up.
+
+Rewriting extraction:
+
+- **Mount-trial** instead of blkid: iterate `/dev/vda*`, try
+  `mount -t ext4`, pick the partition that actually contains
+  `/boot/vmlinuz-virt`. Works regardless of busybox vs util-linux
+  blkid, regardless of arch-specific partition indices.
+- **Sentinel handshake**: guest emits `AQ_EXTRACT_READY` right
+  before `nc -l -p 8080` blocks. Host waits for that sentinel via
+  `wait_for` (which since v2.5.10 surfaces the full serial stream
+  in stderr) before connecting. Eliminates the previous blind
+  30×1s host retry loop, and any guest-side failure (no kernel
+  found, mount error) now appears in the workflow log instead of
+  swallowing into 0-byte vmlinuz/initramfs files.
+- Host-side retry trimmed to 5×1 s — the handshake makes long
+  retries unnecessary.
+
 ## 2.5.13 "blkid the rootfs" 2026-05-23
 
 ### Cross-arch root-partition detection for kernel/initramfs extraction
