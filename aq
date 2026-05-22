@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.10
+VERSION=2.5.11
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -467,7 +467,12 @@ bootstrap_base_image() {
     # Alpine's serial getty emits "localhost login: " on its own once
     # spawned; tio is attached long before then, so expect() matches
     # the natural prompt without any nudge.
-    wait_for 'expect("localhost login: "); write("root\n")'
+    #
+    # tio 3.x renamed write→send in its Lua scripting API. Homebrew
+    # macOS may still ship tio 2.x (which used a non-Lua script
+    # syntax and silently accepted write); using send keeps both
+    # paths working through tio 3.x.
+    wait_for 'expect("localhost login: "); send("root\n")'
 
     echo  ..done
 

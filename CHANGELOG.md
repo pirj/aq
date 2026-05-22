@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.5.11 "send, not write" 2026-05-23
+
+### tio 3.x Lua API: send(), not write()
+
+The v2.5.10 release dropped `--mute` from tio's invocation in
+`wait_for` to surface the serial stream on hangs. The first Linux
+run with this change immediately revealed why the post-login
+bootstrap was hanging for 20 minutes:
+
+```
+[tio] Warning: lua: [string "tio"]:1: attempt to call a nil value (global 'write')
+[tio] Disconnected
+```
+
+tio 3.x's Lua scripting exposes `send(s)`, not `write(s)`. On
+Homebrew/macOS aq was running against tio 2.x — which used a
+non-Lua script syntax that silently accepted the old `write` form —
+so the bug never surfaced there. Linux runners built tio 3.7 from
+source (per setup-bakerish's host_deps), hit the Lua mode, and
+errored on every `write` call.
+
+The first wait_for after VM boot — `expect("localhost login: ");
+write("root\n")` — was supposed to log in as `root`. The `write`
+call was nil and errored; tio exited; `root\n` was never sent. The
+VM sat at the login prompt while aq's bootstrap commands streamed
+in as failed login attempts. setup-alpine never ran, so
+SETUP_ALPINE_x86_64_OK never appeared, and the 20-min workflow
+timeout hit.
+
+- Rename `write(` to `send(` in the login wait_for. The
+  SETUP_ALPINE wait_for has no `send`/`write` so it's unaffected.
+
 ## 2.5.10 "yes |" 2026-05-23
 
 ### setup-alpine no longer hangs on x86_64 multi-prompt confirmation
