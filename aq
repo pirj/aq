@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.8
+VERSION=2.5.9
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -524,17 +524,22 @@ SETUP_CONF_END
     # Send each command as a single line. Encode the heredoc via base64 so the
     # bytes on the serial wire are a single long line that busybox ash can
     # parse without state ambiguity.
+    echo "  writing /root/setup.conf"
     echo "echo $SETUP_CONF_B64 | base64 -d > /root/setup.conf" | socat STDIO UNIX:command.sock
 
     # Install mkfs.ext4 (offline-installable from the live ISO).
+    echo "  apk add e2fsprogs"
     echo "apk add e2fsprogs" | socat STDIO UNIX:command.sock
 
     # Run setup-alpine non-interactively, then emit a sentinel using uname -m
     # substitution. The sentinel string only appears in OUTPUT (after substitution)
     # so wait_for can't false-match the typed input echoed back.
+    echo "  setup-alpine"
     echo "echo y | ROOTFS=ext4 setup-alpine -e -f /root/setup.conf; printf 'SETUP_ALPINE_%s_OK\n' \"\$(uname -m)\"" | socat STDIO UNIX:command.sock
 
+    echo "  awaiting SETUP_ALPINE_${ARCH}_OK"
     wait_for "expect(\"SETUP_ALPINE_${ARCH}_OK\")"
+    echo "  setup-alpine done"
 
     # Best-effort: clean up /root/setup.conf from the installed rootfs.
     # No serial-getty / grub-console hacks here — aq_start now uses SSH for

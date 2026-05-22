@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.5.9 "Bootstrap milestones" 2026-05-22
+
+### Diagnostic logging for the bootstrap_base_image phase
+
+After the v2.5.8 fix unstuck GRUB autoselect on Linux/KVM, the next
+validation run hit a fresh 20-min hang during the post-login
+bootstrap phase. The block was somewhere between sending the
+setup.conf to the live ISO's shell and waiting for the
+`SETUP_ALPINE_X_OK` sentinel, but there were no stderr/stdout
+breadcrumbs in that whole stretch — so the log left no way to
+discriminate which of the three `echo ... | socat` calls (or the
+final `wait_for`) was the one that hung.
+
+- Add stderr milestones around each phase: writing /root/setup.conf,
+  apk add e2fsprogs, setup-alpine launch, and the SETUP_ALPINE_OK
+  wait itself. No behavior change; the next CI run will tell us
+  precisely where the bootstrap stalls.
+
 ## 2.5.8 "Don't poke GRUB" 2026-05-21
 
 ### Linux/KVM base-build no longer hangs on Alpine ISO GRUB autoselect
