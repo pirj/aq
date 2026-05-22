@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.5.10 "yes |" 2026-05-23
+
+### setup-alpine no longer hangs on x86_64 multi-prompt confirmation
+
+The v2.5.9 milestones isolated the post-login Linux/KVM hang to
+`wait_for "expect(\"SETUP_ALPINE_x86_64_OK\")"` — setup-alpine never
+emitted its OK sentinel. setup-alpine on the Alpine x86_64 ISO has
+a deeper bootloader install flow (GRUB on the disk via setup-disk)
+than the aarch64 ISO's EFI-stub path, and asks more confirmation
+prompts. The bootstrap was sending only a single `y\n` via
+`echo y |`, leaving subsequent prompts unanswered.
+
+- Pipe `yes` instead of `echo y` into setup-alpine. `yes` produces
+  infinite `y\n` so however many prompts setup-disk needs, they
+  all get auto-answered. Behaves identically on aarch64 (which
+  finishes after the first y).
+- Drop `--mute` from tio in `wait_for`. The serial stream — setup-
+  alpine progress, kernel messages, any future prompts — now
+  surfaces in stderr, which is the difference between "20 minutes
+  of silence" and "actionable trace" the next time something
+  hangs.
+
 ## 2.5.9 "Bootstrap milestones" 2026-05-22
 
 ### Diagnostic logging for the bootstrap_base_image phase

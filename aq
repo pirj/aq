@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.9
+VERSION=2.5.10
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -389,8 +389,11 @@ wait_for() {
   socat UNIX:command.sock PTY,link=command.pty &
   SOCAT_PID=$!
 
+  # No --mute: surface the serial stream in stderr so cold-path
+  # bootstrap output (setup-alpine progress, prompts, kernel messages)
+  # is visible in logs — invaluable for debugging hangs across host
+  # platforms / qemu versions / Alpine arches.
   tio \
-    --mute \
     --script "$SCRIPT" \
     --script-run once \
     command.pty \
@@ -535,7 +538,12 @@ SETUP_CONF_END
     # substitution. The sentinel string only appears in OUTPUT (after substitution)
     # so wait_for can't false-match the typed input echoed back.
     echo "  setup-alpine"
-    echo "echo y | ROOTFS=ext4 setup-alpine -e -f /root/setup.conf; printf 'SETUP_ALPINE_%s_OK\n' \"\$(uname -m)\"" | socat STDIO UNIX:command.sock
+    # `yes` feeds infinite y\n so any number of confirmation prompts
+    # setup-alpine asks (disk wipe, bootloader install, ...) get
+    # auto-answered. The previous `echo y` only covered the first
+    # prompt; on x86_64 setup-disk emits more than aarch64's EFI-stub
+    # path does, hanging the install on later prompts.
+    echo "yes | ROOTFS=ext4 setup-alpine -e -f /root/setup.conf; printf 'SETUP_ALPINE_%s_OK\n' \"\$(uname -m)\"" | socat STDIO UNIX:command.sock
 
     echo "  awaiting SETUP_ALPINE_${ARCH}_OK"
     wait_for "expect(\"SETUP_ALPINE_${ARCH}_OK\")"
