@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.11
+VERSION=2.5.12
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -468,11 +468,11 @@ bootstrap_base_image() {
     # spawned; tio is attached long before then, so expect() matches
     # the natural prompt without any nudge.
     #
-    # tio 3.x renamed write→send in its Lua scripting API. Homebrew
-    # macOS may still ship tio 2.x (which used a non-Lua script
-    # syntax and silently accepted write); using send keeps both
-    # paths working through tio 3.x.
-    wait_for 'expect("localhost login: "); send("root\n")'
+    # NB: the Lua function is `write()` only in tio >= 3.8 (renamed
+    # from `send` in v3.8 — see tio's release notes). aq requires
+    # tio >= 3.8; setup-bakerish enforces this on Linux runners by
+    # building a recent tio from source.
+    wait_for 'expect("localhost login: "); write("root\n")'
 
     echo  ..done
 

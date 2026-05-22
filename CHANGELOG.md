@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.5.12 "write, actually" 2026-05-23
+
+### Revert v2.5.11; aq requires tio ≥ 3.8
+
+v2.5.11 incorrectly swapped `write(s)` for `send(s)` in the post-
+boot login wait_for after misreading the Linux/KVM CI failure as
+"macOS has tio 2.x, Linux has tio 3.x". The real story (per tio's
+own release notes for v3.8):
+
+> Clean up lua API
+> Rename modem_send() to send()
+> Rename send to write()
+
+So tio v3.7 (what setup-bakerish was building from source on
+Linux) had `send(string)` for serial writes; v3.8 renamed it to
+`write(string)` and re-purposed `send(file, protocol)` as the
+XMODEM/YMODEM file-send helper. Homebrew's macOS tio is on v3.9,
+where the script aq has been using all along (`write("root\n")`)
+is correct.
+
+- Revert v2.5.11. Restore `write("root\n")` in the login wait_for.
+- Document the tio ≥ 3.8 requirement in the comment.
+- aq itself requires no further change; the Linux fix is in
+  setup-bakerish, which now builds tio v3.9 from source instead
+  of v3.7 (see setup-bakerish CHANGELOG).
+
 ## 2.5.11 "send, not write" 2026-05-23
 
 ### tio 3.x Lua API: send(), not write()
