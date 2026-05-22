@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.5.15 "one y, then Enter" 2026-05-23
+
+### Fix setup-interfaces infinite loop from over-broad `yes |`
+
+v2.5.10's `yes |` was the wrong knob — it streams infinite literal
+"y" tokens, which setup-alpine's setup-interfaces step interprets
+as an invalid interface name:
+
+```
+Which one do you want to initialize? (or '?' or 'done') [eth0]
+y
+Available interfaces are: eth0.
+Which one do you want to initialize? (or '?' or 'done') [eth0]
+y
+...
+```
+
+This looped until cancellation on Linux/KVM (which apparently
+asks setup-interfaces interactively even with INTERFACESOPTS in
+setup.conf, unlike aarch64).
+
+Replace `yes |` with `{ echo y; yes ''; } |`: one literal "y" for
+the disk-erase y/N confirmation, then a stream of blank lines so
+every subsequent prompt picks whatever default sits in its `[...]`
+brackets (e.g. `[eth0]` → uses eth0).
+
 ## 2.5.14 "mount-trial + handshake" 2026-05-23
 
 ### Extraction phase: replace blind retry + blkid syntax with handshake
