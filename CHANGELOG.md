@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.5.20 "stty sane -echo" 2026-05-25
+
+### Disable serial echo to break the loopback that races with bootstrap
+
+CI logs from a failing cold-path run on Linux/KVM caught the real
+root cause of the residual flake. Past the v2.5.16/v2.5.18/v2.5.19
+race fixes, some runs still failed at extraction — but the log
+showed something unmistakable:
+
+```
+alpine:~# -sh: ^[[6n: not found              ← ANSI DSR query reflected
+-sh: -sh:: not found                          ← error msg reflected
+-sh: localhost:~#: not found                  ← prompt reflected as command
+-sh: NUTkFNRU9QVFM9: not found               ← base64 chunk reflected
+-sh: 1kZXYKCiMgQ29u: not found               ← more base64 reflected
+...
+alpine:~# amkdir -p /target                   ← "a" prefix corrupts extraction
+```
+
+The guest shell is consuming its own output as input. Default
+Alpine getty leaves /dev/ttyS0 in canonical-mode-with-echo state
+where everything sent from the host is echoed back through the
+same serial. Programs that emit DSR queries (`\e[6n`) see their
+queries reflected back into the shell's stdin. The shell tries to
+execute the reflected bytes as commands, racing whatever bootstrap
+commands we're trying to send. The extraction script's first
+character ("m" of `mkdir`) gets eaten or replaced by garbage,
+/target/ never gets created, mount fails for all `/dev/vda*`,
+extraction emits `AQ_EXTRACT_NO_KERNEL_FOUND`.
+
+This was the real cause of the cold-path flakiness all along —
+v2.5.16/v2.5.18/v2.5.19 each mitigated symptoms (waiting for the
+shell prompt, bundling sends, chunking base64, obfuscating
+sentinels) but the underlying loopback kept finding new ways to
+corrupt timing-sensitive automation.
+
+Fix: append `stty sane -echo; echo AQ_TTY_READY` to the post-login
+`wait_for` so the tty is in a known state with input echo off
+before any bootstrap command goes out. Commands' OUTPUT still
+reaches /dev/ttyS0 (so wait_for's expect() still sees what it
+needs); only the INPUT echo is silenced.
+
 ## 2.5.19 "obfuscated extract sentinel" 2026-05-25
 
 ### tio expect() can't tell input echo from output

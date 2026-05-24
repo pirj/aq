@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.19
+VERSION=2.5.20
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -470,20 +470,25 @@ bootstrap_base_image() {
     #
     # After write("root\n"), DO wait for the shell prompt before
     # returning. Without that second expect, wait_for races against
-    # the guest's login/MOTD rendering and the next bootstrap
-    # commands land before the shell is ready — getty/MOTD bytes
-    # interleave with our long base64-encoded setup.conf line and
-    # corrupt it, so setup-alpine falls back to interactive prompts
-    # (ignoring -f /root/setup.conf), DISKOPTS isn't read, no disk
-    # is installed, and kernel/initramfs extraction finds nothing.
-    # Match the trailing `# ` of the root shell prompt — busybox
-    # ash on Alpine live ISO is `localhost:~# `.
+    # the guest's login/MOTD rendering.
+    #
+    # Then `stty sane -echo` resets the tty to a known state and
+    # disables input echo. The default Alpine getty leaves /dev/ttyS0
+    # in a canonical-mode-with-echo state where everything sent from
+    # the host is echoed back over the SAME serial — and worse,
+    # programs inside the guest that emit DSR queries (`\e[6n`) or
+    # similar terminal-control sequences see their queries reflected
+    # back into the shell's stdin. The shell then tries to execute
+    # those reflected bytes as commands, racing whatever bootstrap
+    # commands we're trying to send. `stty -echo` is the simple
+    # mitigation: shell still reads input lines fine; just doesn't
+    # echo them back to /dev/ttyS0.
     #
     # NB: the Lua function is `write()` only in tio >= 3.8 (renamed
     # from `send` in v3.8 — see tio's release notes). aq requires
     # tio >= 3.8; setup-bakerish enforces this on Linux runners by
     # building a recent tio from source.
-    wait_for 'expect("localhost login: "); write("root\n"); expect("# ", 30000)'
+    wait_for 'expect("localhost login: "); write("root\n"); expect("# ", 30000); write("stty sane -echo; echo AQ_TTY_READY\n"); expect("AQ_TTY_READY", 5000)'
 
     echo  ..done
 
