@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.16
+VERSION=2.5.17
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -568,8 +568,14 @@ SETUP_CONF_END
     # so the prompt loops indefinitely.
     echo "  bootstrap: setup.conf + apk + setup-alpine (bundled)"
     echo "  awaiting SETUP_ALPINE_${ARCH}_OK"
+    # Diagnostic emit between steps: visible in the tio serial dump
+    # for the subsequent wait_for (since v2.5.10's --mute removal).
+    # Lets us tell setup.conf-write failure ("wrong size") from
+    # setup-alpine-misbehavior ("right size but ignored") without
+    # another round-trip.
     {
         printf 'echo %s | base64 -d > /root/setup.conf\n' "$SETUP_CONF_B64"
+        printf 'printf "AQ_SETUPCONF_SIZE=%%s expected=%d\\n" "$(wc -c < /root/setup.conf)"\n' "${#SETUP_CONF}"
         printf 'apk add e2fsprogs\n'
         printf '{ echo y; yes ""; } | ROOTFS=ext4 setup-alpine -e -f /root/setup.conf\n'
         printf 'printf "SETUP_ALPINE_%%s_OK\\n" "$(uname -m)"\n'
