@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.5.19 "obfuscated extract sentinel" 2026-05-25
+
+### tio expect() can't tell input echo from output
+
+After v2.5.18 fixed the cold-path setup.conf write race, extraction
+still raced: host's `wait_for "expect(AQ_EXTRACT_READY)"` matched
+on the SCRIPT SOURCE being echoed back by the guest shell in
+canonical mode (visible in the log as `> echo AQ_EXTRACT_READY` —
+the `> ` continuation prompt = shell is still parsing the for-loop,
+hasn't executed it yet), not on the actual output once execution
+reached the `echo` inside the loop. Host moved on to its nc retry
+and got connection refused 5 times because guest's `nc -l -p 8080`
+hadn't been reached yet.
+
+Fix: build the sentinel literal at printf-runtime so the source
+text doesn't contain it as a contiguous string. `printf
+'AQ_EXTRACT_R%sY\n' EAD` produces `AQ_EXTRACT_READY` on stdout but
+keeps the source as two pieces — input echo won't false-match
+expect("AQ_EXTRACT_READY"). Same treatment for
+AQ_EXTRACT_PARTITION and AQ_EXTRACT_NO_KERNEL_FOUND.
+
+(SETUP_ALPINE_x86_64_OK was already safe by accident — its source
+uses `printf 'SETUP_ALPINE_%s_OK\n' "$(uname -m)"`, and the
+substituted arch name isn't part of the script literal.)
+
 ## 2.5.18 "chunk the base64" 2026-05-25
 
 ### setup.conf written in many short chunks instead of one long line

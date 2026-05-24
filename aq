@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.18
+VERSION=2.5.19
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -633,22 +633,33 @@ SETUP_CONF_END
       # stream in the process — visible in stderr for debugging) before
       # the host-side nc connects. That eliminates the previous 30×1s
       # blind-retry loop and makes any guest-side failure visible.
+      # Sentinels obfuscated via printf '%s' concatenation so they
+      # don't appear as a contiguous string in the script SOURCE.
+      # The shell echoes our input back to serial in canonical mode;
+      # a bare `echo AQ_EXTRACT_READY` would put "AQ_EXTRACT_READY"
+      # in the serial stream BEFORE the loop actually runs (just the
+      # input being echoed during `> ` continuation parsing). tio's
+      # expect() can't tell input echo from output, so it would
+      # false-match and host-side nc would race against guest's nc
+      # that hasn't actually started yet. Building the literal at
+      # printf-runtime keeps "AQ_EXTRACT_READY" out of the input
+      # echo and only on stdout after real execution.
       guest_extract="\
 mkdir -p /target
 for p in /dev/vda*; do
   [ -b \"\$p\" ] || continue
   mount -t ext4 \"\$p\" /target 2>/dev/null || continue
   if [ -f /target/boot/vmlinuz-virt ]; then
-    echo AQ_EXTRACT_PARTITION=\$p
+    printf 'AQ_EXTRACT_PARTI%s\n' \"TION=\$p\"
     $cleanup
-    echo AQ_EXTRACT_READY
+    printf 'AQ_EXTRACT_R%sY\n' EAD
     cd /target/boot && tar c vmlinuz-virt initramfs-virt | nc -l -p 8080
     umount /target
     exit 0
   fi
   umount /target 2>/dev/null
 done
-echo AQ_EXTRACT_NO_KERNEL_FOUND
+printf 'AQ_EXTRACT_NO_KERNEL_%s\n' FOUND
 exit 1"
       echo "$guest_extract" | socat STDIO UNIX:command.sock
 
