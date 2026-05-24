@@ -1,5 +1,58 @@
 # Changelog
 
+## 2.5.16 "bundle the bootstrap" 2026-05-25
+
+### Eliminate the post-login serial race on fast hosts (Linux/KVM CI)
+
+Cold path went non-deterministic on `ubuntu-latest` CI runners
+shortly after the v2.5.15 release: same fixture, same code, three
+re-runs gave three different outcomes — once green, once setup-
+alpine running three times with hostname becoming "y", once
+kernel/initramfs extraction producing zero-byte files.
+
+Root cause is a two-part timing race in `bootstrap_base_image`:
+
+1. **Post-login race.** The pre-bootstrap `wait_for` ended right
+   after `write("root\n")` with no further expect — so wait_for
+   returned before the guest had drawn its shell prompt. The next
+   three `echo "..." | socat STDIO UNIX:command.sock` invocations
+   landed input bytes WHILE the getty was still printing MOTD and
+   the shell hadn't started reading. CI logs caught the smoking
+   gun:
+   ```
+   can setup the system with the command: setup-alpine  apk add e2fsprogs
+   9YWxwaW5lCgojIFN  awaiting SETUP_ALPINE_x86_64_OK
+   echolocalhost:~# echo S0VZTUFQT1BUUz1ub25lCgojIFN...
+   ```
+   The long base64 setup.conf line lost bytes in the interleaving,
+   so on the guest `/root/setup.conf` decoded to garbage,
+   `setup-alpine -f` silently fell back to interactive prompts
+   (DISKOPTS = `[none]` → no install → no kernel/initramfs →
+   extraction fail).
+2. **Reconnect race.** Three back-to-back `echo | socat STDIO`
+   invocations each opened and closed a fresh connection to qemu's
+   `-serial unix:...,server=on` chardev. qemu takes a brief moment
+   to mark the prior client as gone; rapid reconnects could be
+   refused outright or land while the chardev is half-torn-down.
+
+Two fixes, one release:
+
+- **Post-login wait extended**: append `; expect("# ", 30000)` to
+  the login wait_for. Returns only after the shell prompt has
+  rendered.
+- **Bundle the bootstrap**: replace the three separate `echo |
+  socat` invocations with one `{ printf ...; printf ...; ... } |
+  socat` that delivers all four lines (write setup.conf, apk add,
+  run setup-alpine, emit sentinel) in a single connection. One
+  send → one connection → guaranteed in-order delivery to busybox
+  ash, which reads stdin line-by-line and executes sequentially.
+
+The race manifested on fast Linux/KVM CI runners and didn't
+surface on macOS/HVF where the locally-cached prompt arrives
+faster than the next socat could be spawned. Locally reproducing
+under qemu-system-x86_64 + TCG on M3 didn't trigger it either
+(TCG is slow enough that the race window doesn't open).
+
 ## 2.5.15 "one y, then Enter" 2026-05-23
 
 ### Fix setup-interfaces infinite loop from over-broad `yes |`

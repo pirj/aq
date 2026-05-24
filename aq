@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.15
+VERSION=2.5.16
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -468,11 +468,22 @@ bootstrap_base_image() {
     # spawned; tio is attached long before then, so expect() matches
     # the natural prompt without any nudge.
     #
+    # After write("root\n"), DO wait for the shell prompt before
+    # returning. Without that second expect, wait_for races against
+    # the guest's login/MOTD rendering and the next bootstrap
+    # commands land before the shell is ready — getty/MOTD bytes
+    # interleave with our long base64-encoded setup.conf line and
+    # corrupt it, so setup-alpine falls back to interactive prompts
+    # (ignoring -f /root/setup.conf), DISKOPTS isn't read, no disk
+    # is installed, and kernel/initramfs extraction finds nothing.
+    # Match the trailing `# ` of the root shell prompt — busybox
+    # ash on Alpine live ISO is `localhost:~# `.
+    #
     # NB: the Lua function is `write()` only in tio >= 3.8 (renamed
     # from `send` in v3.8 — see tio's release notes). aq requires
     # tio >= 3.8; setup-bakerish enforces this on Linux runners by
     # building a recent tio from source.
-    wait_for 'expect("localhost login: "); write("root\n")'
+    wait_for 'expect("localhost login: "); write("root\n"); expect("# ", 30000)'
 
     echo  ..done
 
@@ -529,31 +540,41 @@ SETUP_CONF_END
 )
     SETUP_CONF_B64=$(printf '%s\n' "$SETUP_CONF" | base64 | tr -d '\n')
 
-    # Send each command as a single line. Encode the heredoc via base64 so the
-    # bytes on the serial wire are a single long line that busybox ash can
-    # parse without state ambiguity.
-    echo "  writing /root/setup.conf"
-    echo "echo $SETUP_CONF_B64 | base64 -d > /root/setup.conf" | socat STDIO UNIX:command.sock
-
-    # Install mkfs.ext4 (offline-installable from the live ISO).
-    echo "  apk add e2fsprogs"
-    echo "apk add e2fsprogs" | socat STDIO UNIX:command.sock
-
-    # Run setup-alpine non-interactively, then emit a sentinel using uname -m
-    # substitution. The sentinel string only appears in OUTPUT (after substitution)
-    # so wait_for can't false-match the typed input echoed back.
-    echo "  setup-alpine"
-    # Feed one literal "y" for the disk-erase y/N prompt, then a
-    # stream of blank lines (Enter) so every subsequent prompt
-    # accepts whatever default sits inside its `[...]` brackets.
-    # Pure `yes` (infinite "y") was wrong: setup-alpine's
-    # setup-interfaces step asks "Which one do you want to
-    # initialize? (or '?' or 'done') [eth0]" — "y" isn't a valid
-    # interface name, so the prompt loops forever. Empty lines pick
-    # the bracketed default (eth0) and let setup-alpine progress.
-    echo "{ echo y; yes ''; } | ROOTFS=ext4 setup-alpine -e -f /root/setup.conf; printf 'SETUP_ALPINE_%s_OK\n' \"\$(uname -m)\"" | socat STDIO UNIX:command.sock
-
+    # Bundle the bootstrap steps into a single multi-line script and
+    # send it in ONE socat invocation. The busybox ash inside Alpine
+    # reads stdin line-by-line and executes sequentially. This
+    # eliminates two races that the previous three-separate-`echo |
+    # socat STDIO` design hit on fast hosts (Linux/KVM CI runners):
+    #
+    #   1. Command-ordering race: between socat invocations the
+    #      shell had a window to lose sync — input bytes could
+    #      arrive interleaved with the previous line still being
+    #      processed, the next line's prefix mixing into ongoing
+    #      MOTD/echo output and corrupting the long base64.
+    #   2. Reconnect race: qemu's serial chardev (server=on) takes
+    #      a brief moment to mark the prior client as gone; rapid
+    #      reconnects could be refused or wedge the chardev briefly.
+    #
+    # One send → one connection → guaranteed in-order delivery.
+    # Combined with the post-login `expect("# ")` in wait_for above,
+    # we're now timing-race-free up to the SETUP_ALPINE_OK sentinel.
+    #
+    # `yes ''` feeds an unbounded stream of blank lines (Enter)
+    # which accept whatever default sits inside each `[...]`
+    # bracket. Initial `echo y` covers the one disk-erase y/N
+    # prompt that doesn't have a y/N default. Earlier `yes` (without
+    # arg) was wrong: setup-interfaces asks "Which one do you want
+    # to initialize? [eth0]" and "y" isn't a valid interface name,
+    # so the prompt loops indefinitely.
+    echo "  bootstrap: setup.conf + apk + setup-alpine (bundled)"
     echo "  awaiting SETUP_ALPINE_${ARCH}_OK"
+    {
+        printf 'echo %s | base64 -d > /root/setup.conf\n' "$SETUP_CONF_B64"
+        printf 'apk add e2fsprogs\n'
+        printf '{ echo y; yes ""; } | ROOTFS=ext4 setup-alpine -e -f /root/setup.conf\n'
+        printf 'printf "SETUP_ALPINE_%%s_OK\\n" "$(uname -m)"\n'
+    } | socat STDIO UNIX:command.sock
+
     wait_for "expect(\"SETUP_ALPINE_${ARCH}_OK\")"
     echo "  setup-alpine done"
 
