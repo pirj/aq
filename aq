@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.17
+VERSION=2.5.18
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -538,43 +538,45 @@ NTPOPTS="busybox"
 DISKOPTS="-m sys /dev/vda"
 SETUP_CONF_END
 )
-    SETUP_CONF_B64=$(printf '%s\n' "$SETUP_CONF" | base64 | tr -d '\n')
+    # base64 wraps at 76 chars by default — keep that fold. We feed
+    # the encoded form into the guest as many short `echo CHUNK >>`
+    # lines, then `base64 -d` the file at the end. Earlier attempts
+    # to send the whole base64 on a single shell command-line (~1 KB
+    # in our case) ended up writing /root/setup.conf as 0 bytes on
+    # Linux/KVM CI runners: somewhere between socat → qemu serial
+    # chardev → kernel tty canonical-mode input buffer → busybox ash,
+    # the long single-line command was lost in flight. The redirect
+    # `> /root/setup.conf` still truncated the file to zero, so
+    # setup-alpine ran with an empty answer file and silently fell
+    # back to interactive prompts. Chunking to <100-byte echo
+    # commands stays safely under any plausible buffer/MAX_CANON
+    # cutoff and parses identically per chunk.
+    SETUP_CONF_B64=$(printf '%s\n' "$SETUP_CONF" | base64)
 
-    # Bundle the bootstrap steps into a single multi-line script and
-    # send it in ONE socat invocation. The busybox ash inside Alpine
-    # reads stdin line-by-line and executes sequentially. This
-    # eliminates two races that the previous three-separate-`echo |
-    # socat STDIO` design hit on fast hosts (Linux/KVM CI runners):
-    #
-    #   1. Command-ordering race: between socat invocations the
-    #      shell had a window to lose sync — input bytes could
-    #      arrive interleaved with the previous line still being
-    #      processed, the next line's prefix mixing into ongoing
-    #      MOTD/echo output and corrupting the long base64.
-    #   2. Reconnect race: qemu's serial chardev (server=on) takes
-    #      a brief moment to mark the prior client as gone; rapid
-    #      reconnects could be refused or wedge the chardev briefly.
-    #
-    # One send → one connection → guaranteed in-order delivery.
-    # Combined with the post-login `expect("# ")` in wait_for above,
-    # we're now timing-race-free up to the SETUP_ALPINE_OK sentinel.
+    # Bundle the bootstrap steps into one socat invocation. busybox
+    # ash inside Alpine reads stdin line-by-line and executes
+    # sequentially. Single connection → guaranteed in-order delivery
+    # and no per-command reconnect race against qemu's serial chardev.
     #
     # `yes ''` feeds an unbounded stream of blank lines (Enter)
     # which accept whatever default sits inside each `[...]`
-    # bracket. Initial `echo y` covers the one disk-erase y/N
-    # prompt that doesn't have a y/N default. Earlier `yes` (without
-    # arg) was wrong: setup-interfaces asks "Which one do you want
-    # to initialize? [eth0]" and "y" isn't a valid interface name,
-    # so the prompt loops indefinitely.
-    echo "  bootstrap: setup.conf + apk + setup-alpine (bundled)"
+    # bracket. Initial `echo y` covers the disk-erase y/N prompt
+    # that doesn't have a y/N default.
+    echo "  bootstrap: setup.conf chunks + apk + setup-alpine (bundled)"
     echo "  awaiting SETUP_ALPINE_${ARCH}_OK"
-    # Diagnostic emit between steps: visible in the tio serial dump
-    # for the subsequent wait_for (since v2.5.10's --mute removal).
-    # Lets us tell setup.conf-write failure ("wrong size") from
-    # setup-alpine-misbehavior ("right size but ignored") without
-    # another round-trip.
     {
-        printf 'echo %s | base64 -d > /root/setup.conf\n' "$SETUP_CONF_B64"
+        printf '> /root/setup.conf.b64\n'
+        # One short echo per base64 line (≤76 chars + wrapper).
+        # All chunks are pure base64 alphabet (alnum + + / =) so no
+        # shell-special characters to escape.
+        while IFS= read -r _b64_line; do
+            printf 'echo %s >> /root/setup.conf.b64\n' "$_b64_line"
+        done <<< "$SETUP_CONF_B64"
+        printf 'base64 -d /root/setup.conf.b64 > /root/setup.conf\n'
+        printf 'rm /root/setup.conf.b64\n'
+        # Diagnostic emit kept post-write: visible in the tio serial
+        # dump (since v2.5.10's --mute removal). N=expected ⇒
+        # chunked write worked. N=0 or partial ⇒ keep digging.
         printf 'printf "AQ_SETUPCONF_SIZE=%%s expected=%d\\n" "$(wc -c < /root/setup.conf)"\n' "${#SETUP_CONF}"
         printf 'apk add e2fsprogs\n'
         printf '{ echo y; yes ""; } | ROOTFS=ext4 setup-alpine -e -f /root/setup.conf\n'

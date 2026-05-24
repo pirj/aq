@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.5.18 "chunk the base64" 2026-05-25
+
+### setup.conf written in many short chunks instead of one long line
+
+v2.5.16's bundle fix eliminated the post-login serial race but the
+cold path was still flaky. v2.5.17's diagnostic emit confirmed:
+`AQ_SETUPCONF_SIZE=0 expected=750` — `/root/setup.conf` was being
+written as exactly 0 bytes, not a partial-truncation. The 1 KB
+single-line `echo $LONG_BASE64 | base64 -d > /root/setup.conf`
+command was getting lost somewhere between socat → qemu serial
+chardev → kernel tty canonical-mode input buffer → busybox ash. The
+redirect itself fired (truncating the file to 0) but the echo
+produced no usable bytes.
+
+Fix: keep base64's default 76-char line wrap, send the encoded form
+as many short `echo CHUNK >> /root/setup.conf.b64` commands, then
+`base64 -d` the assembled file at the end. Each chunk stays well
+under any plausible MAX_CANON/N_TTY_BUF_SIZE cutoff.
+
+## 2.5.17 "diag setup.conf size" 2026-05-25
+
+Diagnostic-only release used to confirm the v2.5.16 cold-path flake
+root cause (see v2.5.18 above). Emits `AQ_SETUPCONF_SIZE=N
+expected=M` after the base64 decode so we can tell file-write
+truncation from setup-alpine misbehavior. Behavior otherwise
+identical to v2.5.16; no need to pin to this version.
+
 ## 2.5.16 "bundle the bootstrap" 2026-05-25
 
 ### Eliminate the post-login serial race on fast hosts (Linux/KVM CI)
