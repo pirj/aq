@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.5.21 "kick sshd on warm restart" 2026-05-25
+
+### Force sshd up via serial after live-restore — works around silent cold-boot fallback
+
+Probing the guest after a cross-job warm bake-run failure caught
+qemu's `-incoming exec:zstd -dc` doing something subtle on
+Linux/KVM: qmp reports `migration: completed` and `state:
+running`, the cont loop succeeds, but the actual guest memory
+state is FRESH (cold-booted from the snapshot's disk). Evidence:
+
+```
+Welcome to Alpine Linux 3.22
+Kernel 6.12.91-0-virt on x86_64 (/dev/ttyS0)
+alpine login: root                                ← fresh getty prompt
+Welcome to your aq Alpine VM.
+alpine:~# ps aux | grep -E "sshd|postgres|dockerd"
+                                                  ← empty: NO snapshot processes
+```
+
+A live-restored guest would have resumed the snapshot's running
+processes (sshd, postgres, dockerd at their original PIDs); a
+cold-booted guest does not, and on the snapshot's frozen-mid-
+runlevel disk, openrc doesn't always bring sshd back. The
+host-side bake-run's wait_for_ssh then sees nothing on hostfwd's
+guest port, gives up after 3 min.
+
+Same-job warm restart from file works perfectly (confirmed
+2026-05-24 via diagnose-warm phase 4 — restored processes show at
+original PIDs). So qemu's restore-from-file IS reliable; what
+differs is _across hosts_: different machine, different runner,
+different kvm-clock starting offset, different host kernel build.
+Some combination causes the silent cold-boot fallback.
+
+Pragmatic workaround: after migration+cont succeeds, send
+`service sshd restart` via the serial-console socket before the
+host-side wait_for_ssh runs. Costs ~2 s on the successful warm
+path (sshd restart is a no-op-ish), unblocks the failure mode.
+
+The cross-host live-restore silent fallback is still upstream-
+worth investigating — possibly a kvm-clock pvclock state issue —
+but until then this gets cold-warm CI green.
+
 ## 2.5.20 "stty sane -echo" 2026-05-25
 
 ### Disable serial echo to break the loopback that races with bootstrap

@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.20
+VERSION=2.5.21
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1385,6 +1385,27 @@ aq_start() {
   # Set up persistent SSH forwarding before waiting — SSH polling needs it.
   SSH_PORT=$(get_persistent_ssh_port "$VM_NAME")
   add_ssh_forward "$VM_NAME" "$SSH_PORT"
+
+  # After live restore we ping sshd via serial — cross-host
+  # `-incoming exec:zstd -dc` on Linux/KVM has been observed to
+  # silently cold-boot the guest instead of applying the migration
+  # data (qmp reports `migration: completed` + `state: running`
+  # but the actual memory state is fresh). On a cold-booted disk
+  # whose openrc reflects mid-snapshot state, sshd doesn't always
+  # come up via the default runlevel — we kick it explicitly so
+  # the subsequent wait_for_ssh is robust to either outcome.
+  # Same-job warm restart hits this same code path as a no-op
+  # (sshd already running, restart finishes in ~1 s).
+  if [ ${#incoming_args[@]} -gt 0 ] && [ -S "$BASE_DIR/$VM_NAME/command.sock" ]; then
+    {
+        printf '\n'
+        sleep 1
+        printf 'root\n'
+        sleep 1
+        printf 'service sshd restart 2>/dev/null || rc-service sshd restart 2>/dev/null || true\n'
+        sleep 3
+    } | timeout 10 socat - "UNIX-CONNECT:$BASE_DIR/$VM_NAME/command.sock" >/dev/null 2>&1 || true
+  fi
 
   # Wait for SSH to be reachable in the guest.
   wait_for_ssh "$VM_NAME" || exit 1
