@@ -1,5 +1,60 @@
 # Changelog
 
+## 2.5.23 "cross-host warm — ssh key + TCP-first probe" 2026-05-26
+
+### Fix: cross-host warm restore now actually authenticates
+
+The 2.5.21 sshd-kick was a workaround for the SYMPTOM
+("Not allowed at this time" banner from the restored guest) but
+not the actual cause. Investigation via in-guest serial commands
+and `~/.ssh/id_ed25519.pub` side-by-side dump on save vs restore
+runners pinned the real chain:
+
+1. `aq new` on the SAVE runner generates K1, bakes K1.pub into
+   the guest's `/root/.ssh/authorized_keys` via setup-alpine.
+2. Cache packs `disk.qcow2` (with K1.pub baked) + `memory.bin`.
+   The host's PRIVATE key K1 is per-runner and NOT in the cache.
+3. RESTORE runner is a fresh Azure VM with a different K2.
+4. After warm restore, `aq start`'s `wait_for_ssh` probe uses
+   K2; the guest's sshd checks against K1.pub; auth fails with
+   `Permission denied (publickey)`.
+5. After ~5–10 failed auths from source 10.0.2.2 (the SLIRP
+   gateway), OpenSSH 10's PerSourcePenalties activates. New
+   connections from 10.0.2.2 are dropped with a
+   `Not allowed at this time` banner BEFORE the SSH version
+   exchange. The probe loop reads this as "ssh not yet up" and
+   retries — each retry refreshes the penalty. Self-sustaining.
+
+Two fixes:
+
+**1. Inject host's pub key into guest's authorized_keys via
+serial**, on the warm-restore path, before `wait_for_ssh`. The
+existing post-restore serial block already logs in as root to
+restart sshd; extended to also append `~/.ssh/id_ed25519.pub`
+(or id_rsa/ecdsa fallback) to `/root/.ssh/authorized_keys`.
+Idempotent via `grep -qxF` guard. No private keys are written
+anywhere — cache stays free of secrets.
+
+**2. Two-phase wait_for_ssh**: TCP-open probe via `/dev/tcp`
+until the port accepts, then exactly ONE ssh attempt with auth.
+Phase 1 generates zero ssh-protocol traffic for sshd to count
+as misbehaviour; phase 2 succeeds because of fix (1). Failed
+phase 2 is reported as a real error (key mismatch), not retried.
+
+Same-host warm restart still works (idempotent inject is a no-op
+when key already in authorized_keys). Cross-host warm restore
+now works.
+
+## 2.5.22 "qemu -D log file env var" 2026-05-25
+
+### `AQ_QEMU_LOG_FILE` env var attaches qemu `-D <file>` to capture trace output
+
+For diagnostic runs where you want qemu's own log (trace events
+via `--trace ...`, migration internals) captured to file. Off by
+default; opt-in via env var. After daemonize qemu's stderr goes
+to `/dev/null`, so `-D <file>` is the only way to recover any
+ongoing qemu output.
+
 ## 2.5.21 "kick sshd on warm restart" 2026-05-25
 
 ### Force sshd up via serial after live-restore — works around silent cold-boot fallback
