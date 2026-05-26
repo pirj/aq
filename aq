@@ -1444,6 +1444,11 @@ aq_start() {
   # URI subprocess failures, etc., on the warm-restore path.
   local -a qemu_log_args=()
   [ -n "${AQ_QEMU_LOG_FILE:-}" ] && qemu_log_args=(-D "$AQ_QEMU_LOG_FILE")
+  # AQ_TIMING: when set, log ms-resolution timing markers for each
+  # aq_start phase. Useful for benchmarks — surfaces where time goes
+  # between "Booting VM" and "Started" (qemu launch, vmstate load,
+  # cont loop, key inject, wait_for_ssh).
+  local _t0=$EPOCHREALTIME _t_qemu _t_migrate _t_cont _t_inject _t_ssh
   $QEMU_BIN \
     -machine $machine_opts -accel $ACCEL -cpu host -m "${vm_memory_g}G" \
     "${boot_args[@]}" \
@@ -1465,6 +1470,7 @@ aq_start() {
   # migration to apply, then resume the CPU and verify the VM is actually
   # running. Retry cont if needed — sending cont during the final inmigrate
   # → paused transition can no-op in some qemu versions.
+  _t_qemu=$EPOCHREALTIME
   if [ ${#incoming_args[@]} -gt 0 ]; then
     local qmp_sock="$BASE_DIR/$VM_NAME/qmp.sock"
     if ! qmp_wait_migrate_incoming "$qmp_sock"; then
@@ -1504,6 +1510,7 @@ aq_start() {
     # Consumed by qemu — remove both possible forms.
     rm -f "$incoming_file_plain" "$incoming_file_zst"
   fi
+  _t_migrate=$EPOCHREALTIME
 
   # Set up persistent SSH forwarding before waiting — SSH polling needs it.
   SSH_PORT=$(get_persistent_ssh_port "$VM_NAME")
@@ -1533,9 +1540,11 @@ aq_start() {
     # host failure mode is found that genuinely needs the kick, add it
     # back behind a env-var opt-in rather than always.
   fi
+  _t_inject=$EPOCHREALTIME
 
   # Wait for SSH to be reachable in the guest.
   wait_for_ssh "$VM_NAME" || exit 1
+  _t_ssh=$EPOCHREALTIME
 
   # Check if first boot setup is needed
   FIRST_BOOT_MARKER="$BASE_DIR/$VM_NAME/.needs_first_boot_setup"
@@ -1546,6 +1555,13 @@ aq_start() {
   fi
 
   stderr Started $VM_NAME
+  if [ -n "${AQ_TIMING:-}" ]; then
+    awk -v t0="$_t0" -v tq="$_t_qemu" -v tm="$_t_migrate" -v ti="$_t_inject" -v ts="$_t_ssh" \
+      'BEGIN {
+        printf "AQ_TIMING: qemu_launch=%.0fms migrate=%.0fms inject=%.0fms wait_ssh=%.0fms total=%.0fms\n",
+          (tq-t0)*1000, (tm-tq)*1000, (ti-tm)*1000, (ts-ti)*1000, (ts-t0)*1000
+       }' >&2
+  fi
 }
 
 aq_stop() {
