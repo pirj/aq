@@ -435,18 +435,21 @@ inject_pubkey_via_serial() {
   local guest_cmd
   guest_cmd="for d in /root /home/rlock; do [ -d \"\$d\" ] || continue; mkdir -p \"\$d/.ssh\"; chmod 700 \"\$d/.ssh\"; if ! grep -qxF '$pubkey' \"\$d/.ssh/authorized_keys\" 2>/dev/null; then echo '$pubkey' >> \"\$d/.ssh/authorized_keys\"; chmod 600 \"\$d/.ssh/authorized_keys\"; fi; chown -R \$(stat -c %U \"\$d\" 2>/dev/null || echo root): \"\$d/.ssh\" 2>/dev/null || true; done; echo $marker"
 
-  # Send: enter (wake shell), root login, inject cmd. Then poll
-  # outfile for marker. The pipeline's writer side closes after the
-  # printf block; socat keeps reading the unix socket (guest output)
-  # to outfile until we kill it.
-  {
-    printf '\n'
-    printf 'root\n'
-    printf '%s\n' "$guest_cmd"
-    # Keep socat alive long enough to flush guest output. Killed
-    # once marker seen below.
-    sleep 8
-  } | socat - "UNIX-CONNECT:$sock" >| "$outfile" 2>&1 &
+  # Background socat with output captured to outfile. We send the
+  # 3 printf lines to its stdin via a here-string (no separate
+  # subshell that would hold the pipeline open). socat reads stdin,
+  # forwards to guest's serial, then on stdin-EOF half-closes and
+  # keeps reading guest output back to outfile until we kill it.
+  #
+  # Why a here-string and not `{ printf; sleep N; } | socat &`:
+  # AQ_TIMING in CI Round 10 showed the `sleep N` placeholder in the
+  # writer subshell blocked the whole pipeline for that full N
+  # seconds — even after kill on socat, bash's `wait $pid` somehow
+  # waited for the writer subshell too. Here-string sidesteps that
+  # by having no writer subshell at all.
+  local stdin_blob
+  stdin_blob=$(printf '\nroot\n%s\n' "$guest_cmd")
+  socat - "UNIX-CONNECT:$sock" >| "$outfile" 2>&1 <<<"$stdin_blob" &
   local pid=$!
 
   local deadline=$(( $(date +%s) + 10 ))
