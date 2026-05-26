@@ -452,22 +452,34 @@ inject_pubkey_via_serial() {
   socat - "UNIX-CONNECT:$sock" >| "$outfile" 2>&1 <<<"$stdin_blob" &
   local pid=$!
 
-  local deadline=$(( $(date +%s) + 10 ))
-  while [ "$(date +%s)" -lt "$deadline" ]; do
+  # Short timeout: when inject works, marker appears in <500 ms.
+  # When it doesn't (guest unresponsive, wrong shell state), the
+  # 10 s wait was pure dead weight on every warm restore that
+  # didn't actually NEED inject (i.e., host key already matches
+  # guest authorized_keys — most CI same-host cases). If marker
+  # isn't seen in 2 s, give up and let wait_for_ssh surface any
+  # real auth issue.
+  local deadline_ms=$(( $(date +%s%N) / 1000000 + 2000 ))
+  while [ "$(date +%s%N | head -c-7)" -lt "$deadline_ms" ]; do
     if grep -q "$marker" "$outfile" 2>/dev/null; then
       kill "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
       rm -f "$outfile"
       return 0
     fi
-    sleep 0.1
+    sleep 0.05
   done
 
   kill "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
-  stderr "  ssh-key serial inject: marker '$marker' not seen in 10 s"
-  stderr "  serial output (tail):"
-  tail -20 "$outfile" >&2 || true
+  stderr "  ssh-key serial inject: marker '$marker' not seen in 2 s"
+  stderr "  outfile size: $(wc -c < "$outfile" 2>/dev/null) bytes"
+  stderr "  outfile head (first 500 bytes):"
+  head -c 500 "$outfile" 2>/dev/null | tr -c '[:print:]\n' '?' >&2 || true
+  echo >&2
+  stderr "  outfile tail (last 500 bytes):"
+  tail -c 500 "$outfile" 2>/dev/null | tr -c '[:print:]\n' '?' >&2 || true
+  echo >&2
   rm -f "$outfile"
   return 1
 }
