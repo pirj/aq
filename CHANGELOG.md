@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.5.34 "zstd --patch-from save side (opt-in)" 2026-05-27
+
+When `AQ_MEMORY_PATCH_MODE=1` and the caller passes
+`AQ_PARENT_MEMORY_ZST=<path>` pointing to the parent live
+layer's memory.bin.zst, `aq snapshot create` now emits the
+new layer's memory as a zstd delta against the parent's
+decompressed raw memory (`zstd --patch-from`). The artifact is
+written as `memory.bin.zstpatch` and a sentinel file
+`memory.format` recording the format. ~95 % disk saving on the
+delta layer when most memory pages are unchanged across the
+chain (typical for plugin layers that extend an already-running
+stack).
+
+This is the save side only. Restore-side chain reconstruction
+lives in rlock (see rlock's snapshot.sh — when the leaf cache
+entry has memory.bin.zstpatch, rlock walks back via meta.json's
+parent links to the oldest non-patch ancestor, decompresses
+that base into a temp raw file, applies forward patches
+sequentially, and stages the result into vm_dir/incoming-
+memory.bin so aq's `-incoming file:` consumer uses it like any
+plain memory snapshot — no aq-side change needed for restore).
+
+Plain pzstd compression (v2.5.33) remains the default when
+either of the env vars is unset, so behavior is unchanged for
+existing rlock invocations until they opt in.
+
 ## 2.5.33 "pzstd multi-frame memory snapshots" 2026-05-27
 
 Switch live-snapshot memory compression from `zstd -T0`

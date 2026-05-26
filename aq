@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.33
+VERSION=2.5.34
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1925,6 +1925,29 @@ aq_snapshot_create() {
     # plain memory.bin.
     if [ "${AQ_NO_SNAPSHOT_COMPRESS:-}" = "1" ]; then
       stderr "Live snapshot: AQ_NO_SNAPSHOT_COMPRESS=1 — leaving memory.bin uncompressed."
+    elif [ "${AQ_MEMORY_PATCH_MODE:-}" = "1" ] && [ -n "${AQ_PARENT_MEMORY_ZST:-}" ] && [ -f "${AQ_PARENT_MEMORY_ZST:-}" ] && command -v zstd >/dev/null 2>&1; then
+      # B5: emit a delta against the parent live layer's memory.
+      # ~95% disk saving per descendant live layer when most pages are
+      # unchanged. Trade: restore-side chain reconstruction is single-
+      # thread + sequential (rlock's snapshot_walk_vm_rebase walks back
+      # to the oldest non-patch ancestor and chain-applies). Opt-in,
+      # gated by AQ_MEMORY_PATCH_MODE=1 + the caller setting
+      # AQ_PARENT_MEMORY_ZST to the parent layer's memory.bin.zst path.
+      # Caller (rlock) is responsible for chain tracking and reconstruction.
+      local _parent_raw
+      _parent_raw=$(mktemp -t aq-patch-parent-XXXXXX)
+      stderr "Live snapshot: decompressing parent for patch reference..."
+      if command -v pzstd >/dev/null 2>&1; then
+        pzstd -dc "$AQ_PARENT_MEMORY_ZST" > "$_parent_raw"
+      else
+        zstd -dc "$AQ_PARENT_MEMORY_ZST" > "$_parent_raw"
+      fi
+      stderr "Live snapshot: computing memory delta (zstd --patch-from)..."
+      zstd -q --rm --patch-from="$_parent_raw" "$snap_dir/memory.bin" \
+        -o "$snap_dir/memory.bin.zstpatch"
+      rm -f "$_parent_raw"
+      # Tag the artifact format so rlock knows to chain-reconstruct.
+      echo "patch" > "$snap_dir/memory.format"
     elif command -v pzstd >/dev/null 2>&1; then
       # pzstd produces a multi-frame zstd-compatible file (~400 frames
       # for our typical 1.6 GiB raw memory). Multi-frame is the format
