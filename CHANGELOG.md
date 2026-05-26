@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.5.24 "wait_for_ssh — revert TCP-first probe" 2026-05-26
+
+The v2.5.23 TCP-first probe also tripped OpenSSH 10's
+`PerSourcePenalties` `noauth` counter — each TCP open+close
+counts as a connection abandoned before authentication. After
+~3 probes × 10 s noauth penalty = 30 s threshold, sshd starts
+dropping new connections.
+
+Revert `wait_for_ssh` to the v2.5.22 ssh-probe loop. The key
+insight (now documented in the function comment): with the
+**key inject** from v2.5.23 in place (cold path bakes the host
+key into authorized_keys via setup-alpine; warm restore appends
+it via serial), the first ssh probe authenticates and the loop
+exits before noauth can accumulate. The key inject is the
+actual fix; the probe-loop redesign was unnecessary and worse.
+
 ## 2.5.23 "cross-host warm — ssh key + TCP-first probe" 2026-05-26
 
 ### Fix: cross-host warm restore now actually authenticates

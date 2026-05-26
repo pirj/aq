@@ -1191,72 +1191,62 @@ FIRST
 }
 
 # Poll SSH until the guest accepts a connection (or time out).
+# Quiet on the warm-boot fast path: only narrates the wait once SSH hasn't
+# come up within ~10s, so a successful start prints just "Started $vm".
 #
-# Two-phase probe — explicitly designed to NOT trigger OpenSSH 10's
-# PerSourcePenalties feature, which bans source IPs that repeatedly
-# fail/abort SSH auth.
+# Probe cadence is 0.5s by default — tight enough that aq start returns
+# within ~half a second of the guest actually being ready. With the prior
+# 2s sleep, warm boots that finished mid-interval paid up to ~2s of dead
+# wait. AQ_SSH_PROBE_INTERVAL overrides if the env wants a different
+# cadence; max_attempts scales with it so the total budget stays ~3 min.
 #
-# Phase 1: TCP connect probe via /dev/tcp. No SSH protocol, no auth
-# attempt, nothing for sshd to count as misbehaviour. Loops until
-# the port accepts a connection.
-#
-# Phase 2: ONE full ssh attempt with proper auth. If this succeeds,
-# we're done. If it fails, the guest's sshd is up but auth failed
-# (e.g. key mismatch — a real error, not a transient probe miss).
-# We don't retry phase 2 — repeated failed auth from the same IP
-# IS exactly what PerSourcePenalties guards against, and retrying
-# wouldn't help anyway since the underlying issue is the key.
-#
-# Probe cadence: 0.5s by default. AQ_SSH_PROBE_INTERVAL overrides.
+# On the OpenSSH 10 / PerSourcePenalties question: the probe loop here
+# CAN trigger noauth counters when sshd is up but our ssh key isn't
+# yet valid (mid-boot, mid-setup-alpine). The defense is the upstream
+# key-inject (cold path: setup-alpine bakes the host's pub key; warm
+# restore: aq_start's serial block appends it post-incoming). With the
+# right key, the FIRST ssh probe authenticates and the loop exits
+# before noauth can accumulate. If probes start failing en masse,
+# investigate the key path, not this loop.
 wait_for_ssh() {
   local vm_name=$1
   local probe_interval=${AQ_SSH_PROBE_INTERVAL:-0.5}
-  # 360 * 0.5s = 3 min budget for TCP-open. Plenty.
+  # 360 * 0.5s = 3 min budget — same wall-clock ceiling as the old
+  # 90 * 2s = 3 min, just with finer resolution.
   local max_attempts=${2:-360}
   local attempt=0
   local notified=0
   local ssh_port
   ssh_port=$(get_vm_ssh_details "$vm_name")
-
-  # Phase 1: TCP-open probe.
   while [ $attempt -lt $max_attempts ]; do
-    if timeout 1 bash -c "exec 3<>/dev/tcp/localhost/$ssh_port" 2>/dev/null; then
-      break
+    if ssh -o StrictHostKeyChecking=no \
+           -o UserKnownHostsFile=/dev/null \
+           -o ConnectTimeout=1 \
+           -o LogLevel=ERROR \
+           -p "$ssh_port" root@localhost true 2>/dev/null; then
+      [ "$notified" = 1 ] && stderr "SSH ready on $vm_name after $attempt attempts."
+      return 0
     fi
     attempt=$((attempt + 1))
+    # ~10 s with the default 0.5 s cadence — same threshold as before
+    # for the "this is taking a while" notification.
     if [ "$notified" = 0 ] && [ $attempt -ge 20 ]; then
       stderr "Waiting for SSH on $vm_name (port $ssh_port)..."
       notified=1
     fi
+    # Periodic heartbeat every ~20 s so CI logs show progress.
     [ $((attempt % 40)) = 0 ] && stderr "  ...still waiting for SSH ($attempt/$max_attempts)"
     sleep "$probe_interval"
   done
-
-  if [ $attempt -ge $max_attempts ]; then
-    stderr "Error: TCP on $vm_name (port $ssh_port) not reachable after $max_attempts attempts."
-    stderr "Diagnostics:"
-    stderr "  process.pid=$(cat $BASE_DIR/$vm_name/process.pid 2>/dev/null)"
-    stderr "  is_vm_running=$(is_vm_running $vm_name && echo yes || echo no)"
-    stderr "  netstat (host listening on $ssh_port):"
-    netstat -an 2>&1 | grep ":$ssh_port " | head -3 >&2 || true
-    return 1
-  fi
-
-  # Phase 2: one full ssh attempt. Auth must succeed.
-  if ssh -o StrictHostKeyChecking=no \
-         -o UserKnownHostsFile=/dev/null \
-         -o ConnectTimeout=5 \
-         -o LogLevel=ERROR \
-         -p "$ssh_port" root@localhost true 2>/dev/null; then
-    [ "$notified" = 1 ] && stderr "SSH ready on $vm_name after $attempt TCP probes + 1 auth."
-    return 0
-  fi
-
-  stderr "Error: TCP open on $ssh_port but ssh auth failed."
-  stderr "  (key mismatch? guest's authorized_keys vs host's id_*.pub)"
-  stderr "  ssh -vv output:"
+  stderr "Error: SSH on $vm_name (port $ssh_port) not reachable after $max_attempts attempts."
+  stderr "Diagnostics:"
+  stderr "  process.pid=$(cat $BASE_DIR/$vm_name/process.pid 2>/dev/null)"
+  stderr "  is_vm_running=$(is_vm_running $vm_name && echo yes || echo no)"
+  stderr "  netstat (host listening on $ssh_port):"
+  netstat -an 2>&1 | grep ":$ssh_port " | head -3 >&2 || true
+  stderr "  ssh -v output:"
   ssh -vv -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-      -o ConnectTimeout=5 -p "$ssh_port" root@localhost true 2>&1 | tail -25 >&2 || true
+      -o ConnectTimeout=5 -p "$ssh_port" root@localhost true 2>&1 | head -30 >&2 || true
   return 1
 }
 
