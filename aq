@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.22
+VERSION=2.5.32
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -460,7 +460,7 @@ inject_pubkey_via_serial() {
   # isn't seen in 2 s, give up and let wait_for_ssh surface any
   # real auth issue.
   local deadline_ms=$(( $(date +%s%N) / 1000000 + 2000 ))
-  while [ "$(date +%s%N | head -c-7)" -lt "$deadline_ms" ]; do
+  while [ "$(( $(date +%s%N) / 1000000 ))" -lt "$deadline_ms" ]; do
     if grep -q "$marker" "$outfile" 2>/dev/null; then
       kill "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
@@ -1463,7 +1463,9 @@ aq_start() {
   # aq_start phase. Useful for benchmarks — surfaces where time goes
   # between "Booting VM" and "Started" (qemu launch, vmstate load,
   # cont loop, key inject, wait_for_ssh).
-  local _t0=$EPOCHREALTIME _t_qemu _t_migrate _t_cont _t_inject _t_ssh
+  # Note: macOS bash's $EPOCHREALTIME uses comma as decimal separator
+  # (locale-dependent). Replace , with . so awk parses it as float.
+  local _t0=${EPOCHREALTIME//,/.} _t_qemu _t_migrate _t_cont _t_inject _t_ssh
   $QEMU_BIN \
     -machine $machine_opts -accel $ACCEL -cpu host -m "${vm_memory_g}G" \
     "${boot_args[@]}" \
@@ -1485,7 +1487,7 @@ aq_start() {
   # migration to apply, then resume the CPU and verify the VM is actually
   # running. Retry cont if needed — sending cont during the final inmigrate
   # → paused transition can no-op in some qemu versions.
-  _t_qemu=$EPOCHREALTIME
+  _t_qemu=${EPOCHREALTIME//,/.}
   if [ ${#incoming_args[@]} -gt 0 ]; then
     local qmp_sock="$BASE_DIR/$VM_NAME/qmp.sock"
     if ! qmp_wait_migrate_incoming "$qmp_sock"; then
@@ -1525,7 +1527,7 @@ aq_start() {
     # Consumed by qemu — remove both possible forms.
     rm -f "$incoming_file_plain" "$incoming_file_zst"
   fi
-  _t_migrate=$EPOCHREALTIME
+  _t_migrate=${EPOCHREALTIME//,/.}
 
   # Set up persistent SSH forwarding before waiting — SSH polling needs it.
   SSH_PORT=$(get_persistent_ssh_port "$VM_NAME")
@@ -1540,14 +1542,22 @@ aq_start() {
   # PerSourcePenalties accumulates failure counters, and after ~5–10
   # attempts the host's IP (10.0.2.2) gets banned with a "Not allowed
   # at this time" banner — locking out the probe loop indefinitely.
-  # Idempotent: grep -qxF guards against duplicate appends, so the
-  # same-host warm restart path is a no-op.
+  #
+  # Same-host fast path: try one SSH probe first. If our host key
+  # is already accepted (the common case — base bootstrapped on this
+  # host with the same pubkey), inject is a no-op and the final
+  # wait_for_ssh would also succeed on its first probe. Skip both.
+  local ssh_already_ready=0
   if [ ${#incoming_args[@]} -gt 0 ] && [ -S "$BASE_DIR/$VM_NAME/command.sock" ]; then
-    local host_pubkey
-    host_pubkey=$(aq_host_pubkey)
-    if [ -n "$host_pubkey" ]; then
-      inject_pubkey_via_serial "$BASE_DIR/$VM_NAME" "$host_pubkey" \
-        || stderr "  (warm key-inject failed; wait_for_ssh will surface the underlying error)"
+    if wait_for_ssh "$VM_NAME" 1 2>/dev/null; then
+      ssh_already_ready=1
+    else
+      local host_pubkey
+      host_pubkey=$(aq_host_pubkey)
+      if [ -n "$host_pubkey" ]; then
+        inject_pubkey_via_serial "$BASE_DIR/$VM_NAME" "$host_pubkey" \
+          || stderr "  (warm key-inject failed; wait_for_ssh will surface the underlying error)"
+      fi
     fi
     # NOTE: v2.5.21's `service sshd restart` was removed in v2.5.26.
     # On a healthy warm restore sshd is already running from save time
@@ -1555,11 +1565,14 @@ aq_start() {
     # host failure mode is found that genuinely needs the kick, add it
     # back behind a env-var opt-in rather than always.
   fi
-  _t_inject=$EPOCHREALTIME
+  _t_inject=${EPOCHREALTIME//,/.}
 
-  # Wait for SSH to be reachable in the guest.
-  wait_for_ssh "$VM_NAME" || exit 1
-  _t_ssh=$EPOCHREALTIME
+  # Wait for SSH to be reachable in the guest. Skip when the fast-path
+  # probe already confirmed reachability.
+  if [ "$ssh_already_ready" = 0 ]; then
+    wait_for_ssh "$VM_NAME" || exit 1
+  fi
+  _t_ssh=${EPOCHREALTIME//,/.}
 
   # Check if first boot setup is needed
   FIRST_BOOT_MARKER="$BASE_DIR/$VM_NAME/.needs_first_boot_setup"

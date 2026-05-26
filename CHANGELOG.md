@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.5.32 "BSD/locale fixes + probe-first SSH fast path" 2026-05-27
+
+Three intertwined changes:
+
+**Fix `head -c-7` BSD incompatibility.** The inject deadline
+loop used `date +%s%N | head -c-7` to drop trailing nanoseconds.
+`head -c-N` (all-but-last-N-bytes) is GNU-only; BSD `head`
+errors with "illegal byte count". Under the error the comparison
+received an empty string, the loop fell through immediately, and
+inject phase reported ~80 ms on M3 — the loop literally never
+iterated. On Linux/GNU CI it correctly waited the full 2 s
+deadline. Replaced with pure bash arithmetic:
+`$(( $(date +%s%N) / 1000000 ))`. Same intent, no subprocess,
+no GNU dependency.
+
+**Fix `$EPOCHREALTIME` locale-decimal-separator.** Bash 5's
+`$EPOCHREALTIME` uses the C library's locale-aware decimal
+separator. On macOS with a non-C locale (most users) it's "," —
+`awk` parsed "1234567890,123" as 0. AQ_TIMING shipped in
+v2.5.29 with all per-phase deltas reading 0 ms on macOS. Now
+substitutes "," → "." via parameter expansion at every read:
+`${EPOCHREALTIME//,/.}`.
+
+**Probe-first warm SSH (skip inject + skip final wait_for_ssh).**
+Once the head-c-7 fix makes the deadline loop honest, the
+same-host warm path takes the full 2 s waiting for a marker
+that never arrives — the inject command itself is a no-op
+because the host's pub key is already in the guest's
+authorized_keys (idempotent grep -qxF). Add a one-shot SSH
+probe (`wait_for_ssh vm 1`) immediately after migrate. If it
+succeeds, the key is already accepted: skip inject entirely
+*and* skip the final wait_for_ssh (which would also succeed on
+its first probe). If the probe fails, fall through to the
+original inject + wait_for_ssh sequence — cross-host warm
+restores keep working with at most one extra PerSourcePenalty
+counter increment, well within the 5-failure budget. M3 same-
+host warm path now has `inject=~80 ms` (the probe itself) and
+`wait_ssh=0 ms` (skipped).
+
 ## 2.5.31 "inject timeout 10s → 2s + diagnostic dump" 2026-05-26
 
 Cap the `inject_pubkey_via_serial` deadline at 2 s instead of 10 s.
@@ -33,11 +72,10 @@ the warm-restore phase breakdown: `qemu_launch`, `migrate`,
 behaviour change. Used by `meta/bench-m3-pure-aq.sh` to isolate
 where warm-restore wall-clock actually goes.
 
-Fixes a macOS-only locale issue: bash's `$EPOCHREALTIME` uses
-the locale's decimal separator. On macOS with non-C locale
-that's "," not "." — `awk` parsed all phase deltas as 0. Now
-`${EPOCHREALTIME//,/.}` substitutes "," with "." before
-arithmetic.
+Known issue at this tag: on macOS with a non-C locale,
+`$EPOCHREALTIME` uses "," as decimal separator, which awk
+parses as 0 — so on macOS the per-phase deltas reported 0 ms.
+Fixed in v2.5.32 alongside the `head -c-7` bug below.
 
 ## 2.5.28 "unified post-SETUP_ALPINE re-login + extract" 2026-05-26
 
