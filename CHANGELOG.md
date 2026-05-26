@@ -1,5 +1,63 @@
 # Changelog
 
+## 2.5.31 "inject timeout 10s → 2s + diagnostic dump" 2026-05-26
+
+Cap the `inject_pubkey_via_serial` deadline at 2 s instead of 10 s.
+The marker grep loop never fires in the common same-key warm path
+(the inject command itself is a no-op because the host's pub key
+is already in the guest's authorized_keys), so the loop ran to
+deadline on every warm restore. CI Round 11 measurement showed
+this as a flat 10 s spent waiting for output that would never
+arrive. 2 s is enough headroom for the cross-host case where the
+marker actually does appear (~500 ms typical).
+
+When the deadline expires, dump the outfile head/tail + byte
+count to stderr so cross-host inject failures surface their
+underlying error (e.g. PerSourcePenalties banner, sshd not yet
+listening) instead of just "marker not seen in 2 s".
+
+## 2.5.30 "inject stdin via here-string" 2026-05-26
+
+Replace `{ printf; sleep N; } | socat &` writer pipeline in
+`inject_pubkey_via_serial` with a here-string: `socat ... <<<"$blob"`.
+The previous form's `sleep` in the writer subshell held the
+pipeline open for the full N seconds even after socat itself was
+killed — `wait $pid` waited for the writer too. Here-string has
+no writer subshell, so deadline-based termination actually works.
+
+## 2.5.29 "AQ_TIMING env var" 2026-05-26
+
+When `AQ_TIMING=1`, `aq start` emits a single-line summary of
+the warm-restore phase breakdown: `qemu_launch`, `migrate`,
+`inject`, `wait_ssh`, total — all in ms. Pure diagnostic, no
+behaviour change. Used by `meta/bench-m3-pure-aq.sh` to isolate
+where warm-restore wall-clock actually goes.
+
+Fixes a macOS-only locale issue: bash's `$EPOCHREALTIME` uses
+the locale's decimal separator. On macOS with non-C locale
+that's "," not "." — `awk` parsed all phase deltas as 0. Now
+`${EPOCHREALTIME//,/.}` substitutes "," with "." before
+arithmetic.
+
+## 2.5.28 "unified post-SETUP_ALPINE re-login + extract" 2026-05-26
+
+Cold-path race fix on M3 aarch64: after `SETUP_ALPINE_OK` the
+old code dropped the tio session, reconnected, then sent the
+extract sequence. Between disconnect and reconnect the getty
+respawned and the extract bytes were lost. Unify the post-
+SETUP-ALPINE re-login + extract send + `AQ_EXTRACT_READY`
+expect into ONE tio Lua script chain — single connection
+across all three steps, no respawn window.
+
+## 2.5.27 "noclobber + mktemp fix in inject" 2026-05-26
+
+`inject_pubkey_via_serial` created its outfile via `mktemp` then
+redirected with `>`. Under `set -fC` bash's noclobber refuses to
+overwrite an existing file — mktemp had just created it. Use
+`>|` to force-truncate. Without this fix the inject path errored
+out before sending anything to the guest, masquerading as a
+"marker not seen" failure.
+
 ## 2.5.26 "warm key-inject — marker-driven + drop sshd kick" 2026-05-26
 
 Two improvements to the warm-restore key-inject path:
