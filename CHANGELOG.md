@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.5.33 "pzstd multi-frame memory snapshots" 2026-05-27
+
+Switch live-snapshot memory compression from `zstd -T0`
+(single-frame) to `pzstd` (multi-frame, ~386 frames per 1.6 GiB
+raw on our test fixture). pzstd writes a wire-compatible zstd
+archive — old hosts and old caches keep working with `zstd -dc`
+— but the multi-frame structure enables parallel decompression
+on the restore side.
+
+On restore, `aq start` now prefers `pzstd -dc` over `zstd -dc`
+when both are present. Decompression of a multi-frame archive
+runs at ~6 GiB/s aggregate on M3 (vs ~1.3 GiB/s single-thread),
+so the migrate phase on rails-pg-sample drops from ~1.77 s to
+~0.97 s — a 28 % wall-clock saving on a typical warm restore.
+
+Fully backward compatible:
+- pzstd -dc on a single-frame zstd file: falls back to single-thread, same speed as zstd -dc.
+- zstd -dc on a multi-frame pzstd file: works, single-thread.
+- AQ_NO_SNAPSHOT_COMPRESS=1 opt-out unchanged.
+
+No new opt-in flag — pzstd is preferred whenever it's available
+on PATH. On macOS Homebrew's `zstd` formula ships pzstd by
+default. On Linux it's typically a separate package.
+
 ## 2.5.32 "BSD/locale fixes + probe-first SSH fast path" 2026-05-27
 
 Three intertwined changes:

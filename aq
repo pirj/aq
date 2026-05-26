@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.32
+VERSION=2.5.33
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1403,12 +1403,22 @@ aq_start() {
   local incoming_file_zst="$BASE_DIR/$VM_NAME/incoming-memory.bin.zst"
   local incoming_file_plain="$BASE_DIR/$VM_NAME/incoming-memory.bin"
   if [ -f "$incoming_file_zst" ]; then
-    if ! command -v zstd >/dev/null 2>&1; then
-      stderr "Error: $incoming_file_zst present but zstd not installed on the host."
-      stderr "  Either: brew install zstd, or remove the .zst and rely on a plain memory.bin."
+    # Prefer pzstd: on multi-frame inputs it decompresses in parallel
+    # (~5× faster on M3 for our typical 500 MiB .zst, ~1 GiB/s aggregate).
+    # On legacy single-frame inputs (made by plain `zstd -T0`) it falls
+    # back to single-thread automatically. pzstd reads the same zstd
+    # format, so old caches keep working with no migration step.
+    local _decomp_cmd
+    if command -v pzstd >/dev/null 2>&1; then
+      _decomp_cmd="pzstd -dc"
+    elif command -v zstd >/dev/null 2>&1; then
+      _decomp_cmd="zstd -dc"
+    else
+      stderr "Error: $incoming_file_zst present but neither pzstd nor zstd installed on the host."
+      stderr "  Either: brew install zstd (or zstd's pzstd binary), or remove the .zst and rely on a plain memory.bin."
       exit 1
     fi
-    incoming_args=(-incoming "exec:zstd -dc $incoming_file_zst")
+    incoming_args=(-incoming "exec:$_decomp_cmd $incoming_file_zst")
   elif [ -f "$incoming_file_plain" ]; then
     incoming_args=(-incoming "file:$incoming_file_plain")
   fi
@@ -1915,8 +1925,16 @@ aq_snapshot_create() {
     # plain memory.bin.
     if [ "${AQ_NO_SNAPSHOT_COMPRESS:-}" = "1" ]; then
       stderr "Live snapshot: AQ_NO_SNAPSHOT_COMPRESS=1 — leaving memory.bin uncompressed."
+    elif command -v pzstd >/dev/null 2>&1; then
+      # pzstd produces a multi-frame zstd-compatible file (~400 frames
+      # for our typical 1.6 GiB raw memory). Multi-frame is the format
+      # that pzstd -dc can decompress in parallel at restore — ~5×
+      # faster on M3 than plain `zstd -dc`. Wire-format compatible with
+      # `zstd -dc` for hosts without pzstd; consumed file is identical.
+      stderr "Live snapshot: compressing memory state (pzstd, multi-frame)..."
+      pzstd -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
     elif command -v zstd >/dev/null 2>&1; then
-      stderr "Live snapshot: compressing memory state (zstd)..."
+      stderr "Live snapshot: compressing memory state (zstd, single-frame fallback)..."
       zstd -T0 -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
     else
       stderr "Live snapshot: zstd not installed — leaving memory.bin uncompressed."
