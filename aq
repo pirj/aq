@@ -1427,7 +1427,14 @@ aq_start() {
             # The guest shell receives this verbatim. ssh public keys
             # are base64 + alphanumerics + spaces — no single-quote
             # collisions to worry about.
-            printf "mkdir -p /root/.ssh && chmod 700 /root/.ssh && (grep -qxF '%s' /root/.ssh/authorized_keys 2>/dev/null || echo '%s' >> /root/.ssh/authorized_keys)\n" \
+            #
+            # rlock's _base plugin clones /root/.ssh/authorized_keys to
+            # /home/rlock/.ssh/authorized_keys at base-build time, but
+            # we run AFTER base-build during warm restore — so we have
+            # to append to both. The for-loop also tolerates absent
+            # /home/rlock (non-rlock-aware base images): the if guard
+            # skips it silently.
+            printf "for d in /root /home/rlock; do [ -d \"\$d\" ] || continue; mkdir -p \"\$d/.ssh\"; chmod 700 \"\$d/.ssh\"; if ! grep -qxF '%s' \"\$d/.ssh/authorized_keys\" 2>/dev/null; then echo '%s' >> \"\$d/.ssh/authorized_keys\"; chmod 600 \"\$d/.ssh/authorized_keys\"; fi; chown -R \$(stat -c %%U \"\$d\" 2>/dev/null || echo root): \"\$d/.ssh\" 2>/dev/null || true; done\n" \
                    "$host_pubkey" "$host_pubkey"
             sleep 1
         fi
