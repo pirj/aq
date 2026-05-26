@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.34
+VERSION=2.5.35
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1905,63 +1905,73 @@ aq_snapshot_create() {
     stderr "Live snapshot: resuming VM..."
     qmp_hmp "$qmp_sock" 'cont' >/dev/null
 
-    # Compress memory.bin with zstd (multi-threaded). RAM dumps are
-    # very compressible — zero pages, page cache, repeated kernel
-    # structures typically yield 3-5× on real workloads. Save-side
-    # cost is a few seconds on M3; restore-side cost is the price of
-    # pipe-based migration via `-incoming exec:zstd -dc`, measured at
-    # ~370 ms on the rails-pg-sample fixture vs `-incoming file:`.
+    # Memory.bin format selection. Trade-off is disk vs restore time;
+    # AQ_MEMORY_SNAPSHOT picks one of three points on the curve.
     #
-    # Trade-off: disk vs warm-restore time.
-    #   * Multi-project laptops: disk savings (~1.1 GB per live layer)
-    #     dominate, since the warm penalty is a one-off per `rl new`.
-    #   * Single-project CI runners that warm-restore the same VM many
-    #     times per cache key: the warm penalty multiplies; the disk
-    #     saving is one-shot. They can opt out with
-    #     AQ_NO_SNAPSHOT_COMPRESS=1 — aq writes plain memory.bin and
-    #     aq_start uses `-incoming file:` (the older fast path).
-    #
-    # If zstd isn't installed, behaves the same as the opt-out: leave
-    # plain memory.bin.
-    if [ "${AQ_NO_SNAPSHOT_COMPRESS:-}" = "1" ]; then
-      stderr "Live snapshot: AQ_NO_SNAPSHOT_COMPRESS=1 — leaving memory.bin uncompressed."
-    elif [ "${AQ_MEMORY_PATCH_MODE:-}" = "1" ] && [ -n "${AQ_PARENT_MEMORY_ZST:-}" ] && [ -f "${AQ_PARENT_MEMORY_ZST:-}" ] && command -v zstd >/dev/null 2>&1; then
-      # B5: emit a delta against the parent live layer's memory.
-      # ~95% disk saving per descendant live layer when most pages are
-      # unchanged. Trade: restore-side chain reconstruction is single-
-      # thread + sequential (rlock's snapshot_walk_vm_rebase walks back
-      # to the oldest non-patch ancestor and chain-applies). Opt-in,
-      # gated by AQ_MEMORY_PATCH_MODE=1 + the caller setting
-      # AQ_PARENT_MEMORY_ZST to the parent layer's memory.bin.zst path.
-      # Caller (rlock) is responsible for chain tracking and reconstruction.
-      local _parent_raw
-      _parent_raw=$(mktemp -t aq-patch-parent-XXXXXX)
-      stderr "Live snapshot: decompressing parent for patch reference..."
-      if command -v pzstd >/dev/null 2>&1; then
-        pzstd -dc "$AQ_PARENT_MEMORY_ZST" > "$_parent_raw"
-      else
-        zstd -dc "$AQ_PARENT_MEMORY_ZST" > "$_parent_raw"
-      fi
-      stderr "Live snapshot: computing memory delta (zstd --patch-from)..."
-      zstd -q --rm --patch-from="$_parent_raw" "$snap_dir/memory.bin" \
-        -o "$snap_dir/memory.bin.zstpatch"
-      rm -f "$_parent_raw"
-      # Tag the artifact format so rlock knows to chain-reconstruct.
-      echo "patch" > "$snap_dir/memory.format"
-    elif command -v pzstd >/dev/null 2>&1; then
-      # pzstd produces a multi-frame zstd-compatible file (~400 frames
-      # for our typical 1.6 GiB raw memory). Multi-frame is the format
-      # that pzstd -dc can decompress in parallel at restore — ~5×
-      # faster on M3 than plain `zstd -dc`. Wire-format compatible with
-      # `zstd -dc` for hosts without pzstd; consumed file is identical.
-      stderr "Live snapshot: compressing memory state (pzstd, multi-frame)..."
-      pzstd -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
-    elif command -v zstd >/dev/null 2>&1; then
-      stderr "Live snapshot: compressing memory state (zstd, single-frame fallback)..."
-      zstd -T0 -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
-    else
-      stderr "Live snapshot: zstd not installed — leaving memory.bin uncompressed."
-    fi
+    # AQ_MEMORY_SNAPSHOT selects the on-disk format for live memory:
+    #   raw         — uncompressed memory.bin. Fastest restore (no
+    #                 decompress step); largest disk (~1.6 GiB on
+    #                 rails-pg-sample). Restore uses `-incoming file:`.
+    #   zstd        — DEFAULT. memory.bin.zst via pzstd (multi-frame,
+    #                 parallel decompress at restore on M3 ~6 GiB/s).
+    #                 ~30% disk, balanced restore time. Wire-compatible
+    #                 with single-thread `zstd -dc` on hosts without
+    #                 pzstd. Restore uses `-incoming exec:pzstd -dc` or
+    #                 `-incoming exec:zstd -dc`.
+    #   zstd-patch  — memory.bin.zstpatch via `zstd --patch-from` against
+    #                 the parent live layer's decompressed memory (caller
+    #                 sets AQ_PARENT_MEMORY_ZST). 95–99% smaller than zstd
+    #                 at <5% page churn, ~70% smaller at 10% churn.
+    #                 Restore: rlock chain-reconstructs by decompressing
+    #                 the chain base and applying forward patches —
+    #                 +~1.7 s per chain step vs zstd. Useful when OCI
+    #                 cache push size is the binding constraint and
+    #                 chain depth is shallow.
+    local _memsnap="${AQ_MEMORY_SNAPSHOT:-zstd}"
+    case "$_memsnap" in
+      raw)
+        stderr "Live snapshot: AQ_MEMORY_SNAPSHOT=raw — leaving memory.bin uncompressed."
+        ;;
+      zstd-patch)
+        if [ -z "${AQ_PARENT_MEMORY_ZST:-}" ] || [ ! -f "${AQ_PARENT_MEMORY_ZST:-}" ]; then
+          stderr "Error: AQ_MEMORY_SNAPSHOT=zstd-patch requires AQ_PARENT_MEMORY_ZST pointing at the parent layer's memory.bin.zst (got '${AQ_PARENT_MEMORY_ZST:-}')."
+          exit 1
+        fi
+        if ! command -v zstd >/dev/null 2>&1; then
+          stderr "Error: AQ_MEMORY_SNAPSHOT=zstd-patch requires zstd on PATH."
+          exit 1
+        fi
+        local _parent_raw
+        _parent_raw=$(mktemp -t aq-patch-parent-XXXXXX)
+        stderr "Live snapshot: decompressing parent for patch reference..."
+        if command -v pzstd >/dev/null 2>&1; then
+          pzstd -dc "$AQ_PARENT_MEMORY_ZST" > "$_parent_raw"
+        else
+          zstd -dc "$AQ_PARENT_MEMORY_ZST" > "$_parent_raw"
+        fi
+        stderr "Live snapshot: computing memory delta (zstd --patch-from)..."
+        zstd -q --rm --patch-from="$_parent_raw" "$snap_dir/memory.bin" \
+          -o "$snap_dir/memory.bin.zstpatch"
+        rm -f "$_parent_raw"
+        # Tag the artifact format so rlock knows to chain-reconstruct.
+        echo "patch" > "$snap_dir/memory.format"
+        ;;
+      zstd)
+        if command -v pzstd >/dev/null 2>&1; then
+          stderr "Live snapshot: compressing memory state (pzstd, multi-frame)..."
+          pzstd -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
+        elif command -v zstd >/dev/null 2>&1; then
+          stderr "Live snapshot: compressing memory state (zstd, single-frame fallback)..."
+          zstd -T0 -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
+        else
+          stderr "Live snapshot: AQ_MEMORY_SNAPSHOT=zstd but neither pzstd nor zstd installed — falling back to raw memory.bin."
+        fi
+        ;;
+      *)
+        stderr "Error: unknown AQ_MEMORY_SNAPSHOT='$_memsnap' (expected: raw, zstd, zstd-patch)."
+        exit 1
+        ;;
+    esac
 
     has_memory=true
   else

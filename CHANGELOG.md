@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.5.35 "AQ_MEMORY_SNAPSHOT — single enum replaces two flags" 2026-05-27
+
+**Breaking change.** Replace `AQ_NO_SNAPSHOT_COMPRESS=1` and
+`AQ_MEMORY_PATCH_MODE=1` with a single enum env var:
+
+    AQ_MEMORY_SNAPSHOT=raw      # uncompressed memory.bin
+    AQ_MEMORY_SNAPSHOT=zstd     # DEFAULT — pzstd multi-frame
+    AQ_MEMORY_SNAPSHOT=zstd-patch  # zstd --patch-from delta
+
+The previous two boolean flags were mutually exclusive but
+encoded as separate variables with implicit precedence, which
+made the "which mode am I in?" question harder than it should
+have been. One enum makes the trinary choice explicit at the
+point of configuration.
+
+`zstd-patch` still requires `AQ_PARENT_MEMORY_ZST=<path>` (it's
+the data the patch is computed against, not a mode selector —
+kept separate). aq now errors out at save time if patch mode is
+requested without a valid parent reference, instead of silently
+falling back to plain compression.
+
+**Migration:** no aliases. `AQ_NO_SNAPSHOT_COMPRESS` and
+`AQ_MEMORY_PATCH_MODE` are removed entirely. Replace in any
+CI configs, dotfiles, or scripts:
+
+    OLD                                 NEW
+    AQ_NO_SNAPSHOT_COMPRESS=1     →     AQ_MEMORY_SNAPSHOT=raw
+    AQ_MEMORY_PATCH_MODE=1        →     AQ_MEMORY_SNAPSHOT=zstd-patch
+    (default)                     →     AQ_MEMORY_SNAPSHOT=zstd  (or unset)
+
+rlock v0.1.7 (next) wires this through; rlock v0.1.6 still
+reads `AQ_MEMORY_PATCH_MODE` and will silently produce plain
+zstd snapshots if you bump aq without rlock. Bump both
+together.
+
 ## 2.5.34 "zstd --patch-from save side (opt-in)" 2026-05-27
 
 When `AQ_MEMORY_PATCH_MODE=1` and the caller passes

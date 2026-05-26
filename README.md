@@ -192,20 +192,14 @@ User-facing knobs aq reads at runtime:
 | Variable | Effect | Default |
 |---|---|---|
 | `AQ_HOST_KEY` | Path to the host's SSH **private** key (the `.pub` sibling is used as the key baked into the guest's `authorized_keys` at base bootstrap and re-injected via serial on cross-host warm restore). Use this when the host's default key (`~/.ssh/id_ed25519` → `id_rsa` → `id_ecdsa` fallback chain) isn't the one you want guests to trust — e.g. CI runners with a dedicated bot key, or benchmark harnesses generating a fresh per-run key. | Auto-detect from `~/.ssh/id_ed25519.pub` (then `id_rsa.pub`, then `id_ecdsa.pub`) |
-| `AQ_NO_SNAPSHOT_COMPRESS=1` | Skip zstd/pzstd compression of `memory.bin` in live snapshots. Trade: ~400 ms faster warm restore (no decompress step) for ~1.1 GiB more disk per live layer. CI runners that warm-restore a single project many times per cache key benefit; multi-project laptops where every cached layer is one-shot don't. | Unset → compress with `pzstd` (multi-frame, parallel decode at restore) if available, else `zstd -T0` |
-| `AQ_MEMORY_PATCH_MODE=1` + `AQ_PARENT_MEMORY_ZST=<path>` | **Opt-in** to `zstd --patch-from` memory deltas (rlock sets this when stacking live layers; see rlock v0.1.6). Disk: 95–99 % saving per delta layer at typical churn. Restore: +~1.7 s per chain step. Useful when cache size / OCI push bandwidth is the binding constraint and chain depth is shallow. Plain `pzstd` (the default) wins on wall-clock for deep chains or local-disk-plentiful setups. | Unset → write a full pzstd layer instead of a patch |
+| `AQ_MEMORY_SNAPSHOT` | One of `raw` / `zstd` / `zstd-patch`. Picks the on-disk format for live-snapshot memory: <ul><li>`raw` — uncompressed `memory.bin`. Fastest restore (no decompress step); largest disk (~1.6 GiB on rails-pg-sample). Restore uses `-incoming file:`.</li><li>`zstd` — DEFAULT. `memory.bin.zst` via pzstd (multi-frame, parallel decompress at restore on M3 ~6 GiB/s). ~30 % of raw on disk, balanced restore time. Wire-compatible with single-thread `zstd -dc` on hosts without pzstd.</li><li>`zstd-patch` — `memory.bin.zstpatch` via `zstd --patch-from` against the parent live layer's decompressed memory. 95–99 % smaller than `zstd` at <5 % page churn, ~70 % smaller at 10 % churn. Restore: rlock chain-reconstructs by decompressing the chain base and applying forward patches — +~1.7 s per chain step vs `zstd`. Requires `AQ_PARENT_MEMORY_ZST` pointing at the parent layer's `memory.bin.zst`. Useful when OCI cache push size is the binding constraint and chain depth is shallow (rlock sets both env vars when its caller picks `zstd-patch`).</li></ul> | `zstd` |
+| `AQ_PARENT_MEMORY_ZST=<path>` | Required when `AQ_MEMORY_SNAPSHOT=zstd-patch`. Path to the parent live layer's `memory.bin.zst` (will be decompressed in-process to use as the patch reference). aq errors out at save time if the path is missing or unreadable. | Unset |
 | `AQ_TIMING=1` | Emit a single-line phase breakdown from `aq start`: `qemu_launch`, `migrate`, `inject`, `wait_ssh`, total — all ms. Pure diagnostic; no behavioural change. | Unset → quiet |
 
-The two compression modes are mutually exclusive. Precedence in `aq snapshot create`:
-1. `AQ_NO_SNAPSHOT_COMPRESS=1` → uncompressed `memory.bin`
-2. `AQ_MEMORY_PATCH_MODE=1` + valid parent → `memory.bin.zstpatch`
-3. otherwise → `memory.bin.zst` (pzstd preferred, zstd fallback)
-
-So if both opt-out and patch-mode are set, the opt-out wins
-(uncompressed memory.bin, no patch). To switch from patch mode
-to plain compression for a single run, just unset
-`AQ_MEMORY_PATCH_MODE` in that shell — no per-layer flag is
-needed.
+The three `AQ_MEMORY_SNAPSHOT` modes are mutually exclusive by
+construction (it's an enum, not a set of flags). To switch
+between them for a single run, just override the env var in
+that shell — no per-layer flag is needed.
 
 Diagnostic / niche knobs (not normally touched):
 
