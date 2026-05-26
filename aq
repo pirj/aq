@@ -383,6 +383,92 @@ download_alpine_iso() {
   )
 }
 
+# Resolve the host's pub key for guest auth (cold base build bakes
+# it into authorized_keys; warm restore appends it via serial).
+#
+# AQ_HOST_KEY override: path to private key file (the .pub sibling
+# is the public key). Useful for benchmarks / tests where we want to
+# control which keypair is used without touching $HOME/.ssh/.
+#
+# Fallback: $HOME/.ssh/id_ed25519.pub > id_rsa.pub > id_ecdsa.pub.
+aq_host_pubkey() {
+  if [ -n "${AQ_HOST_KEY:-}" ] && [ -f "$AQ_HOST_KEY.pub" ]; then
+    cat "$AQ_HOST_KEY.pub"
+    return
+  fi
+  local k
+  for k in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub" "$HOME/.ssh/id_ecdsa.pub"; do
+    [ -f "$k" ] && { cat "$k"; return; }
+  done
+}
+
+# `ssh -i $AQ_HOST_KEY` args when AQ_HOST_KEY is set. Empty otherwise
+# (ssh falls back to its default key lookup in ~/.ssh/).
+aq_ssh_id_args() {
+  if [ -n "${AQ_HOST_KEY:-}" ] && [ -f "$AQ_HOST_KEY" ]; then
+    printf -- '-i %s' "$AQ_HOST_KEY"
+  fi
+}
+
+# Inject the host's pub key into the guest's authorized_keys via the
+# serial console, on the warm-restore path. Avoids the auth-failure
+# cascade that triggers OpenSSH 10's PerSourcePenalties.
+#
+# Args: <vm_dir> <pubkey>
+# Returns 0 on marker seen (success), 1 on timeout.
+#
+# Marker-driven: sends `echo AQ_INJECT_DONE_<unique>` at the end of
+# the guest commands; polls the socat stdout file for that marker.
+# Avoids the prior `sleep 1; sleep 1; sleep 3` timing margins —
+# typically completes in ~300-500 ms once the guest shell is up.
+inject_pubkey_via_serial() {
+  local vm_dir="$1"
+  local pubkey="$2"
+  local sock="$vm_dir/command.sock"
+  local marker="AQ_INJECT_DONE_$$_$RANDOM"
+  local outfile
+  outfile=$(mktemp -t aq-inject.XXXXXX)
+
+  # Guest-side: idempotent append + chmod + chown across /root and
+  # /home/rlock (rlock's _base plugin clones authorized_keys to
+  # /home/rlock at base-build time). Marker echoed last.
+  local guest_cmd
+  guest_cmd="for d in /root /home/rlock; do [ -d \"\$d\" ] || continue; mkdir -p \"\$d/.ssh\"; chmod 700 \"\$d/.ssh\"; if ! grep -qxF '$pubkey' \"\$d/.ssh/authorized_keys\" 2>/dev/null; then echo '$pubkey' >> \"\$d/.ssh/authorized_keys\"; chmod 600 \"\$d/.ssh/authorized_keys\"; fi; chown -R \$(stat -c %U \"\$d\" 2>/dev/null || echo root): \"\$d/.ssh\" 2>/dev/null || true; done; echo $marker"
+
+  # Send: enter (wake shell), root login, inject cmd. Then poll
+  # outfile for marker. The pipeline's writer side closes after the
+  # printf block; socat keeps reading the unix socket (guest output)
+  # to outfile until we kill it.
+  {
+    printf '\n'
+    printf 'root\n'
+    printf '%s\n' "$guest_cmd"
+    # Keep socat alive long enough to flush guest output. Killed
+    # once marker seen below.
+    sleep 8
+  } | socat - "UNIX-CONNECT:$sock" > "$outfile" 2>&1 &
+  local pid=$!
+
+  local deadline=$(( $(date +%s) + 10 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if grep -q "$marker" "$outfile" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      rm -f "$outfile"
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  stderr "  ssh-key serial inject: marker '$marker' not seen in 10 s"
+  stderr "  serial output (tail):"
+  tail -20 "$outfile" >&2 || true
+  rm -f "$outfile"
+  return 1
+}
+
 # Waits for certain input, can type, etc
 wait_for() {
   SCRIPT=$1
@@ -498,7 +584,7 @@ bootstrap_base_image() {
     # heredoc into the live ISO's tty — busybox ash heredoc termination over
     # serial proved fragile (the SETUP-CONF terminator was not consistently
     # recognised on x86_64, leaving the shell stuck in a continuation prompt).
-    SSH_PUB=$(ls $HOME/.ssh | grep '\.pub$' | head -1 | xargs -I_ cat $HOME/.ssh/_)
+    SSH_PUB=$(aq_host_pubkey)
     SETUP_CONF=$(cat <<SETUP_CONF_END
 KEYMAPOPTS=none
 
@@ -1140,7 +1226,7 @@ vm_ssh() {
   VM_NAME=$1
   shift
   SSH_PORT=$(get_vm_ssh_details "$VM_NAME")
-  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p "$SSH_PORT" root@localhost "$@"
+  ssh $(aq_ssh_id_args) -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p "$SSH_PORT" root@localhost "$@"
 }
 
 # Execute SCP command with VM using common options
@@ -1219,7 +1305,7 @@ wait_for_ssh() {
   local ssh_port
   ssh_port=$(get_vm_ssh_details "$vm_name")
   while [ $attempt -lt $max_attempts ]; do
-    if ssh -o StrictHostKeyChecking=no \
+    if ssh $(aq_ssh_id_args) -o StrictHostKeyChecking=no \
            -o UserKnownHostsFile=/dev/null \
            -o ConnectTimeout=1 \
            -o LogLevel=ERROR \
@@ -1245,7 +1331,7 @@ wait_for_ssh() {
   stderr "  netstat (host listening on $ssh_port):"
   netstat -an 2>&1 | grep ":$ssh_port " | head -3 >&2 || true
   stderr "  ssh -v output:"
-  ssh -vv -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  ssh $(aq_ssh_id_args) -vv -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
       -o ConnectTimeout=5 -p "$ssh_port" root@localhost true 2>&1 | head -30 >&2 || true
   return 1
 }
@@ -1414,35 +1500,17 @@ aq_start() {
   # Idempotent: grep -qxF guards against duplicate appends, so the
   # same-host warm restart path is a no-op.
   if [ ${#incoming_args[@]} -gt 0 ] && [ -S "$BASE_DIR/$VM_NAME/command.sock" ]; then
-    local host_pubkey=""
-    for _k in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub" "$HOME/.ssh/id_ecdsa.pub"; do
-      [ -f "$_k" ] && { host_pubkey=$(cat "$_k"); break; }
-    done
-    {
-        printf '\n'
-        sleep 1
-        printf 'root\n'
-        sleep 1
-        if [ -n "$host_pubkey" ]; then
-            # The guest shell receives this verbatim. ssh public keys
-            # are base64 + alphanumerics + spaces — no single-quote
-            # collisions to worry about.
-            #
-            # rlock's _base plugin clones /root/.ssh/authorized_keys to
-            # /home/rlock/.ssh/authorized_keys at base-build time, but
-            # we run AFTER base-build during warm restore — so we have
-            # to append to both. The for-loop also tolerates absent
-            # /home/rlock (non-rlock-aware base images): the if guard
-            # skips it silently.
-            printf "for d in /root /home/rlock; do [ -d \"\$d\" ] || continue; mkdir -p \"\$d/.ssh\"; chmod 700 \"\$d/.ssh\"; if ! grep -qxF '%s' \"\$d/.ssh/authorized_keys\" 2>/dev/null; then echo '%s' >> \"\$d/.ssh/authorized_keys\"; chmod 600 \"\$d/.ssh/authorized_keys\"; fi; chown -R \$(stat -c %%U \"\$d\" 2>/dev/null || echo root): \"\$d/.ssh\" 2>/dev/null || true; done\n" \
-                   "$host_pubkey" "$host_pubkey"
-            sleep 1
-        fi
-        # Also kick sshd in case openrc state is mid-shutdown after a
-        # cross-host cold-boot-fallback. No-op on healthy resume.
-        printf 'service sshd restart 2>/dev/null || rc-service sshd restart 2>/dev/null || true\n'
-        sleep 3
-    } | timeout 10 socat - "UNIX-CONNECT:$BASE_DIR/$VM_NAME/command.sock" >/dev/null 2>&1 || true
+    local host_pubkey
+    host_pubkey=$(aq_host_pubkey)
+    if [ -n "$host_pubkey" ]; then
+      inject_pubkey_via_serial "$BASE_DIR/$VM_NAME" "$host_pubkey" \
+        || stderr "  (warm key-inject failed; wait_for_ssh will surface the underlying error)"
+    fi
+    # NOTE: v2.5.21's `service sshd restart` was removed in v2.5.26.
+    # On a healthy warm restore sshd is already running from save time
+    # and restart is dead weight (~3 s of sleeps). If a future cross-
+    # host failure mode is found that genuinely needs the kick, add it
+    # back behind a env-var opt-in rather than always.
   fi
 
   # Wait for SSH to be reachable in the guest.

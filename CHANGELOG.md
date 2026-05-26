@@ -1,5 +1,50 @@
 # Changelog
 
+## 2.5.26 "warm key-inject — marker-driven + drop sshd kick" 2026-05-26
+
+Two improvements to the warm-restore key-inject path:
+
+**1. Marker-driven serial inject** (replaces fixed sleeps).
+
+The v2.5.23-25 inject used `sleep 1; sleep 1; sleep 1; sleep 3` =
+~6 s timing margin. Replaced with a unique marker
+(`AQ_INJECT_DONE_$PID_$RANDOM`) appended to the guest command;
+host polls socat's captured stdout for that marker and proceeds
+the moment it appears. Typical completion: ~300-500 ms vs the
+prior 6 s. Expected savings: ~5 s on every warm restore.
+
+**2. Drop `service sshd restart`** (v2.5.21 workaround).
+
+That restart was added as a workaround for a hypothetical "silent
+cold-boot fallback" mode where qemu reports `migration completed`
+but the guest is actually fresh-booted. With the v2.5.23+ key
+inject in place, the actual cross-host warm failure mode (ssh
+auth fail → PerSourcePenalties cascade) is fixed at the source.
+On a healthy warm restore sshd is already running from save
+time; the restart is dead weight. If a future failure mode is
+found that genuinely needs the kick, add it back behind an
+env-var opt-in.
+
+**3. `AQ_HOST_KEY` env var** for benchmarks/tests.
+
+Path to a private key file; aq uses `.pub` sibling for the
+guest's authorized_keys (cold setup-alpine bake + warm serial
+inject) and `-i $AQ_HOST_KEY` for ssh client args. Falls back
+to `$HOME/.ssh/id_*.pub` when unset. Lets benchmarks generate
+disposable test keypairs without touching `$HOME/.ssh/`.
+
+## 2.5.25 "extend key inject to /home/rlock too" 2026-05-26
+
+The v2.5.23/24 key inject only updated /root/.ssh/authorized_keys,
+but rlock's bake-run uses ssh rlock@localhost (the unprivileged
+'rlock' user, not root). rlock's _base plugin clones authorized_keys
+from /root to /home/rlock at BASE-BUILD time — but cross-host warm
+restore lands AFTER that clone, so the rlock user still has the SAVE
+runner's pub key.
+
+Loop over [/root, /home/rlock]: append host's pub key if missing,
+preserve permissions, chown to the directory's owner.
+
 ## 2.5.24 "wait_for_ssh — revert TCP-first probe" 2026-05-26
 
 The v2.5.23 TCP-first probe also tripped OpenSSH 10's
