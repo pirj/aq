@@ -676,19 +676,10 @@ SETUP_CONF_END
 
     wait_for "expect(\"SETUP_ALPINE_${ARCH}_OK\")"
     echo "  setup-alpine done"
-
-    # After SETUP_ALPINE_OK the prior socat disconnected, which can
-    # cause the live-ISO's getty to respawn the login prompt. Without
-    # an explicit re-login here, the subsequent extract-script bytes
-    # land on the respawning shell and get lost.
-    #
-    # Send a newline to nudge any pending prompt, then explicitly
-    # wait for the login prompt and re-login. If the shell was
-    # actually still alive, this is a no-op (login: doesn't appear
-    # within timeout, but the marker echo confirms we're at shell).
-    # In practice on M3 aarch64 setup-alpine's disk install always
-    # triggers a respawn → this is the deterministic path.
-    wait_for 'write("\n"); expect("login: ", 60000); write("root\n"); expect("# ", 5000); write("stty sane -echo; echo AQ_RELOGIN_OK\n"); expect("AQ_RELOGIN_OK", 5000)'
+    # (The extract phase below opens ITS OWN tio session that does
+    # re-login + extract send + AQ_EXTRACT_READY expect all in one
+    # connection — no inter-session gap that could let live-ISO's
+    # getty respawn between login and our extract script send.)
 
     # Best-effort: clean up /root/setup.conf from the installed rootfs.
     # No serial-getty / grub-console hacks here — aq_start now uses SSH for
@@ -765,13 +756,30 @@ for p in /dev/vda*; do
 done
 printf 'AQ_EXTRACT_NO_KERNEL_%s\n' FOUND
 exit 1"
-      echo "$guest_extract" | socat STDIO UNIX:command.sock
 
-      # Capture the guest serial up to AQ_EXTRACT_READY (or 30 s timeout).
-      # Anything that goes wrong upstream — mount failures, missing
-      # /boot/vmlinuz-virt, etc. — surfaces in the workflow log via
-      # tio's stream because we dropped --mute in v2.5.10.
-      wait_for 'expect("AQ_EXTRACT_READY", 30000)'
+      # Critical: re-login + extract send + AQ_EXTRACT_READY wait all
+      # in ONE tio session. The prior two-socat design (send via socat
+      # A, wait via tio B) had a window between sessions where the
+      # live-ISO's getty could respawn the login prompt — making the
+      # extract send land on a re-spawning shell that swallowed the
+      # bytes. One session = no inter-session gap.
+      #
+      # Lua's [[ ... ]] long-string carries the multi-line bash extract
+      # verbatim. Bash's double-quoted "..." (wait_for arg) expands
+      # $guest_extract before tio sees the script.
+      wait_for "
+write(\"\\n\")
+expect(\"login: \", 60000)
+write(\"root\\n\")
+expect(\"# \", 5000)
+write(\"stty sane -echo\\n\")
+expect(\"# \", 5000)
+write([[
+${guest_extract}
+]])
+write(\"\\n\")
+expect(\"AQ_EXTRACT_READY\", 30000)
+"
 
       # Fetch the tar stream from the hostfwd port. Just a couple of
       # quick retries — nc should already be listening because
