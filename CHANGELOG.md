@@ -8,23 +8,60 @@ layer's memory.bin.zst, `aq snapshot create` now emits the
 new layer's memory as a zstd delta against the parent's
 decompressed raw memory (`zstd --patch-from`). The artifact is
 written as `memory.bin.zstpatch` and a sentinel file
-`memory.format` recording the format. ~95 % disk saving on the
-delta layer when most memory pages are unchanged across the
-chain (typical for plugin layers that extend an already-running
-stack).
+`memory.format` recording the format.
 
-This is the save side only. Restore-side chain reconstruction
-lives in rlock (see rlock's snapshot.sh — when the leaf cache
-entry has memory.bin.zstpatch, rlock walks back via meta.json's
-parent links to the oldest non-patch ancestor, decompresses
-that base into a temp raw file, applies forward patches
-sequentially, and stages the result into vm_dir/incoming-
-memory.bin so aq's `-incoming file:` consumer uses it like any
-plain memory snapshot — no aq-side change needed for restore).
+### Measured trade-off on a 1.6 GiB raw memory (rails-pg-sample, M3)
 
-Plain pzstd compression (v2.5.33) remains the default when
-either of the env vars is unset, so behavior is unchanged for
-existing rlock invocations until they opt in.
+Patch sizes against the same parent, varying the simulated
+churn (random bytes, worst-case incompressible — real workloads
+with structured page changes do better):
+
+| Churn | Patch size | Save vs full pzstd (480 MiB) |
+|---|---|---|
+| 0 % (identical pages) | 0.4 MiB | 99.9 % |
+| 1 % changed | 15.4 MiB | 97 % |
+| 5 % changed | 76.4 MiB | 84 % |
+| 10 % changed | 153 MiB | 68 % |
+| 25 % changed | 384 MiB | 20 % |
+
+Below ~5 % churn the patch is roughly the size of the changed
+region itself — for typical stacked plugin layers that extend
+an already-running container stack (postgres warm, redis
+unchanged, app-server adds one process) the actual ratio is
+expected to land in the 95–99 % range.
+
+### Restore-side cost
+
+| Path | Wall-clock on M3 |
+|---|---|
+| pzstd -dc full layer (baseline) | 422 ms |
+| Patch chain: decompress base + apply 1 patch | 2162 ms (594 + 1568) |
+
+A patched warm restore costs ~+1.7 s per chain step vs the
+unpatched baseline. Chain depth doesn't divide — each
+additional layer adds its own ~1.7 s. **For deep chains, plain
+pzstd is the faster trade.** Patch mode is useful when:
+- Cache push size / OCI transport bandwidth is the binding constraint, OR
+- Chain depth is shallow (2–3 layers) AND most layers' churn is small.
+
+### Default behaviour
+
+Patch mode is **opt-in**: with `AQ_MEMORY_PATCH_MODE` unset (or
+without `AQ_PARENT_MEMORY_ZST`), aq writes plain pzstd-compressed
+memory.bin.zst exactly as v2.5.33 did. No format migration of
+existing caches. The fast restore path is the default.
+
+To skip compression entirely (fastest restore, no disk saving),
+keep using `AQ_NO_SNAPSHOT_COMPRESS=1` from v2.5.21 — aq writes
+raw memory.bin and `aq start` consumes it via `-incoming file:`.
+
+Save side only in this release. Restore-side chain
+reconstruction lives in rlock v0.1.6 (snapshot_walk_vm_rebase
+walks back via meta.json's parent links to the oldest non-patch
+ancestor, decompresses the base, applies forward patches, and
+stages the result into vm_dir/incoming-memory.bin so aq's
+`-incoming file:` consumer treats it like any plain memory
+snapshot — no aq-side change needed for restore).
 
 ## 2.5.33 "pzstd multi-frame memory snapshots" 2026-05-27
 
