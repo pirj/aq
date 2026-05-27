@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.37
+VERSION=2.5.38
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1951,11 +1951,20 @@ aq_snapshot_create() {
         # `>|` to force-truncate over mktemp's just-created file under
         # aq's `set -fC` (noclobber). Same trick as inject_pubkey_via_serial
         # used in v2.5.27.
-        if command -v pzstd >/dev/null 2>&1; then
-          pzstd -dc "$AQ_PARENT_MEMORY_ZST" >| "$_parent_raw"
-        else
-          zstd -dc "$AQ_PARENT_MEMORY_ZST" >| "$_parent_raw"
-        fi
+        #
+        # NOTE: explicitly single-thread `zstd -dc` here, even when
+        # pzstd is on PATH. The patch encoder embeds an XXH64 checksum
+        # of the post-patch reconstructed data; at decode time, applying
+        # the patch against a reference produced by `zstd -dc` must
+        # yield byte-identical output to the encoder's reference. pzstd
+        # parallel decompression of large multi-frame archives has been
+        # observed to produce a reference whose downstream patch-apply
+        # trips zstd error 36 "Restored data doesn't match checksum" on
+        # ubuntu-latest CI (cold-zstd-patch failure in benchmark-r17-r18,
+        # 2026-05-27). The ~1 s extra decompression time only fires on
+        # the save side of AQ_MEMORY_SNAPSHOT=zstd-patch (opt-in) and is
+        # buried in cold-build wall-clock.
+        zstd -dc "$AQ_PARENT_MEMORY_ZST" >| "$_parent_raw"
         stderr "Live snapshot: computing memory delta (zstd --patch-from)..."
         # --long=31 sets the long-range window to 2 GiB, big enough to
         # cover our typical 1.6 GiB memory.bin reference. Default

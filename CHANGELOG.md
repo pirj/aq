@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.5.38 "patch-from refs use single-thread zstd for determinism" 2026-05-27
+
+CI re-bench against the 3-live-layer rails-pg-sample fixture
+exposed an R18 (zstd-patch mode) failure: cold-zstd-patch
+crashed with `Decoding error (36): Restored data doesn't match
+checksum` right after the patch encoder finished. Same code
+path works on M3.
+
+Root cause: the patch decoder applies the .zstpatch against a
+reference produced by decompressing the parent layer's
+memory.bin.zst, then validates the result against the XXH64
+checksum embedded by the encoder. Both encode and decode used
+`pzstd -dc` when pzstd was on PATH. pzstd's parallel
+decompression of large multi-frame archives has been observed
+to produce output whose downstream patch-apply trips error 36
+on ubuntu-latest CI runners — even though both invocations ran
+on the same runner with the same pzstd binary. The reference
+bytes weren't bit-identical between two consecutive `pzstd
+-dc` runs of the same file.
+
+Fix: use single-thread `zstd -dc` exclusively for patch-from
+references in both `aq snapshot create` (encode) and rlock's
+chain reconstructor (decode). Costs ~1 s extra wall-clock per
+patch encode/decode (~1.5 GiB raw memory at zstd's ~1.3 GiB/s
+single-thread); the encode side is buried in cold-build time
+anyway, and the decode side already trades wall-clock for disk
+under `AQ_MEMORY_SNAPSHOT=zstd-patch`.
+
+The `pzstd -dc` fast path is unchanged for the default
+`AQ_MEMORY_SNAPSHOT=zstd` mode — qemu's migration stream is
+the direct consumer there, not a patch input, so byte-level
+determinism between two reads of the same file doesn't matter.
+
 ## 2.5.37 "inject timeout 2s → 10s on cross-host" 2026-05-27
 
 Bench against R17 fixture on ubuntu-latest CI exposed a
