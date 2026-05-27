@@ -1965,6 +1965,13 @@ aq_snapshot_create() {
         # the save side of AQ_MEMORY_SNAPSHOT=zstd-patch (opt-in) and is
         # buried in cold-build wall-clock.
         zstd -dc "$AQ_PARENT_MEMORY_ZST" >| "$_parent_raw"
+        # DIAG: sha256 of decompressed reference, to compare against
+        # the decode-side ref hash logged by rlock's chain reconstruction.
+        # Lets us tell apart "zstd -dc isn't deterministic" from "zstd
+        # --patch-from is broken with our specific inputs".
+        if command -v sha256sum >/dev/null 2>&1; then
+          stderr "  PATCH_DIAG encode-ref sha256=$(sha256sum "$_parent_raw" | cut -d' ' -f1)  bytes=$(stat -c %s "$_parent_raw" 2>/dev/null || stat -f %z "$_parent_raw")"
+        fi
         stderr "Live snapshot: computing memory delta (zstd --patch-from)..."
         # --long=31 sets the long-range window to 2 GiB, big enough to
         # cover our typical 1.6 GiB memory.bin reference. Default
