@@ -310,7 +310,7 @@ disposable test keypairs without touching `$HOME/.ssh/`.
 ## 2.5.25 "extend key inject to /home/rlock too" 2026-05-26
 
 The v2.5.23/24 key inject only updated /root/.ssh/authorized_keys,
-but rlock's bake-run uses ssh rlock@localhost (the unprivileged
+but rlock's snapc-run uses ssh rlock@localhost (the unprivileged
 'rlock' user, not root). rlock's _base plugin clones authorized_keys
 from /root to /home/rlock at BASE-BUILD time — but cross-host warm
 restore lands AFTER that clone, so the rlock user still has the SAVE
@@ -394,7 +394,7 @@ ongoing qemu output.
 
 ### Force sshd up via serial after live-restore — works around silent cold-boot fallback
 
-Probing the guest after a cross-job warm bake-run failure caught
+Probing the guest after a cross-job warm snapc-run failure caught
 qemu's `-incoming exec:zstd -dc` doing something subtle on
 Linux/KVM: qmp reports `migration: completed` and `state:
 running`, the cont loop succeeds, but the actual guest memory
@@ -413,7 +413,7 @@ A live-restored guest would have resumed the snapshot's running
 processes (sshd, postgres, dockerd at their original PIDs); a
 cold-booted guest does not, and on the snapshot's frozen-mid-
 runlevel disk, openrc doesn't always bring sshd back. The
-host-side bake-run's wait_for_ssh then sees nothing on hostfwd's
+host-side snapc-run's wait_for_ssh then sees nothing on hostfwd's
 guest port, gives up after 3 min.
 
 Same-job warm restart from file works perfectly (confirmed
@@ -674,7 +674,7 @@ own release notes for v3.8):
 > Rename modem_send() to send()
 > Rename send to write()
 
-So tio v3.7 (what setup-bakerish was building from source on
+So tio v3.7 (what setup-snapcompose was building from source on
 Linux) had `send(string)` for serial writes; v3.8 renamed it to
 `write(string)` and re-purposed `send(file, protocol)` as the
 XMODEM/YMODEM file-send helper. Homebrew's macOS tio is on v3.9,
@@ -684,8 +684,8 @@ is correct.
 - Revert v2.5.11. Restore `write("root\n")` in the login wait_for.
 - Document the tio ≥ 3.8 requirement in the comment.
 - aq itself requires no further change; the Linux fix is in
-  setup-bakerish, which now builds tio v3.9 from source instead
-  of v3.7 (see setup-bakerish CHANGELOG).
+  setup-snapcompose, which now builds tio v3.9 from source instead
+  of v3.7 (see setup-snapcompose CHANGELOG).
 
 ## 2.5.11 "send, not write" 2026-05-23
 
@@ -705,7 +705,7 @@ tio 3.x's Lua scripting exposes `send(s)`, not `write(s)`. On
 Homebrew/macOS aq was running against tio 2.x — which used a
 non-Lua script syntax that silently accepted the old `write` form —
 so the bug never surfaced there. Linux runners built tio 3.7 from
-source (per setup-bakerish's host_deps), hit the Lua mode, and
+source (per setup-snapcompose's host_deps), hit the Lua mode, and
 errored on every `write` call.
 
 The first wait_for after VM boot — `expect("localhost login: ");

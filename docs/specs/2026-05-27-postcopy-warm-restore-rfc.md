@@ -16,7 +16,7 @@ behind `AQ_POSTCOPY=1`. Default off.
 
 ## Motivation
 
-Round 16 (M3 full-stack `bake run` warm) is currently dominated
+Round 16 (M3 full-stack `snapc run` warm) is currently dominated
 by the `migrate` phase: ~960 ms of the ~1100 ms aq-side cost,
 i.e. ~87 % of aq's time. The bulk of that is QEMU's vmstate
 apply (memory pages written into dest guest physical memory)
@@ -30,7 +30,7 @@ the 1.6 GiB captured memory, the resume can succeed before most
 pages have ever been requested. Anything cold-paged later is
 amortised against the actual workload's first reads.
 
-Expected wall-clock outcome on M3 same-host: warm `bake run`
+Expected wall-clock outcome on M3 same-host: warm `snapc run`
 from ~1.85 s to ~1.0–1.3 s.
 
 ## Non-goals

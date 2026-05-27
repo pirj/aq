@@ -591,7 +591,7 @@ bootstrap_base_image() {
     #
     # NB: the Lua function is `write()` only in tio >= 3.8 (renamed
     # from `send` in v3.8 — see tio's release notes). aq requires
-    # tio >= 3.8; setup-bakerish enforces this on Linux runners by
+    # tio >= 3.8; setup-snapcompose enforces this on Linux runners by
     # building a recent tio from source.
     wait_for 'expect("localhost login: "); write("root\n"); expect("# ", 30000); write("stty sane -echo; echo AQ_TTY_READY\n"); expect("AQ_TTY_READY", 5000)'
 

@@ -3,7 +3,7 @@
 `aq` is a Bash QEMU wrapper for **Alpine Linux** virtual machines
 on macOS (HVF) and Linux x86_64 (KVM). It's the lowest layer of
 the rlock product family — everything above (`rlock`, `ai.rlock`,
-`bakeri.sh`) calls into `aq` for VM lifecycle.
+`snapcompose`) calls into `aq` for VM lifecycle.
 
 For project background, see [`README.md`](README.md); for shipped
 cornerstone decisions see [`DECISIONS.md`](DECISIONS.md); for what
@@ -100,7 +100,7 @@ the CLI is meant for both humans and scripts.
   at boot" path will silently re-introduce the 15s sfdisk
   round-trip we eliminated in v2.4.0.
 - Don't refactor the snapshot format without a CHANGELOG entry
-  and a benchmark run — `rlock` and `bakeri.sh` depend on the
+  and a benchmark run — `rlock` and `snapcompose` depend on the
   on-disk layout for cross-machine cache (planned via OCI).
 
 ## Sibling repos
@@ -109,7 +109,7 @@ the CLI is meant for both humans and scripts.
   lifecycle and snapshot operations via subprocess. The plugin
   protocol layer.
 - [`ai.rlock`](https://github.com/pirj/ai.rlock),
-  [`bakeri.sh`](https://github.com/pirj/bakeri.sh) — rlock
+  [`snapcompose`](https://github.com/pirj/snapcompose) — rlock
   plugin packs; they don't call `aq` directly.
 
 ## Where decisions go

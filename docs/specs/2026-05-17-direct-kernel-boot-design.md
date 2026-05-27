@@ -98,7 +98,7 @@ size):
   then create the overlay. Slow the first time, fast every subsequent
   `aq new --size=N`.
 
-This naturally handles per-project size variation: rlock or bakeri.sh
+This naturally handles per-project size variation: rlock or snapcompose
 workflows that need 16 GB pass `--size=16G`; agent-only workloads or
 casual `aq new` invocations stay on the default 2 GB (matches today's
 effective per-VM size, so existing callers are unaffected). Each size's
