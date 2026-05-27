@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.35
+VERSION=2.5.36
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1944,13 +1944,21 @@ aq_snapshot_create() {
         local _parent_raw
         _parent_raw=$(mktemp -t aq-patch-parent-XXXXXX)
         stderr "Live snapshot: decompressing parent for patch reference..."
+        # `>|` to force-truncate over mktemp's just-created file under
+        # aq's `set -fC` (noclobber). Same trick as inject_pubkey_via_serial
+        # used in v2.5.27.
         if command -v pzstd >/dev/null 2>&1; then
-          pzstd -dc "$AQ_PARENT_MEMORY_ZST" > "$_parent_raw"
+          pzstd -dc "$AQ_PARENT_MEMORY_ZST" >| "$_parent_raw"
         else
-          zstd -dc "$AQ_PARENT_MEMORY_ZST" > "$_parent_raw"
+          zstd -dc "$AQ_PARENT_MEMORY_ZST" >| "$_parent_raw"
         fi
         stderr "Live snapshot: computing memory delta (zstd --patch-from)..."
-        zstd -q --rm --patch-from="$_parent_raw" "$snap_dir/memory.bin" \
+        # --long=31 sets the long-range window to 2 GiB, big enough to
+        # cover our typical 1.6 GiB memory.bin reference. Default
+        # window is 128 MiB which would error at compress time on any
+        # reference larger than that. Restore side needs the matching
+        # --long=31 flag (set in rlock's chain reconstruction).
+        zstd -q --rm --long=31 --patch-from="$_parent_raw" "$snap_dir/memory.bin" \
           -o "$snap_dir/memory.bin.zstpatch"
         rm -f "$_parent_raw"
         # Tag the artifact format so rlock knows to chain-reconstruct.

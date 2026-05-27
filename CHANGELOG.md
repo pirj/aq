@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.5.36 "patch-mode bugfixes — noclobber + --long=31" 2026-05-27
+
+Two bugs in v2.5.34's `AQ_MEMORY_SNAPSHOT=zstd-patch` path,
+both surfaced by the first end-to-end multi-live-layer bench
+on rails-pg-sample.
+
+**noclobber on the patch-parent tmpfile.** `aq snapshot create`'s
+patch branch decompresses the parent's `memory.bin.zst` into a
+temp file via `mktemp` + `>`. Under aq's `set -fC` (noclobber),
+`>` refuses to overwrite the just-created tmpfile and errors
+out with "cannot overwrite existing file". Same shape as the
+inject-loop bug fixed in v2.5.27. Fix: `>|` for explicit
+truncation.
+
+**zstd `--long=31` required on >128 MiB references.** Our typical
+memory.bin is 1.6 GiB. `zstd --patch-from=<1.6 GiB file>`
+compresses with a window large enough to cover the reference,
+but the decoder (CLI default 128 MiB cap) refuses to decode any
+frame whose declared window exceeds the cap — errors with
+"Window size larger than maximum / Use --long=31". Pass
+`--long=31` on both compress and decompress to bump the window
+to 2 GiB. (rlock's chain reconstructor — v0.1.9 — needs the
+same flag on its decompress invocations.)
+
+Without these, v2.5.34's patch mode never produced a usable
+artifact on any non-trivial workload.
+
 ## 2.5.35 "AQ_MEMORY_SNAPSHOT — single enum replaces two flags" 2026-05-27
 
 **Breaking change.** Replace `AQ_NO_SNAPSHOT_COMPRESS=1` and
