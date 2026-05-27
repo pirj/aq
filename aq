@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.36
+VERSION=2.5.37
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -452,14 +452,18 @@ inject_pubkey_via_serial() {
   socat - "UNIX-CONNECT:$sock" >| "$outfile" 2>&1 <<<"$stdin_blob" &
   local pid=$!
 
-  # Short timeout: when inject works, marker appears in <500 ms.
-  # When it doesn't (guest unresponsive, wrong shell state), the
-  # 10 s wait was pure dead weight on every warm restore that
-  # didn't actually NEED inject (i.e., host key already matches
-  # guest authorized_keys — most CI same-host cases). If marker
-  # isn't seen in 2 s, give up and let wait_for_ssh surface any
-  # real auth issue.
-  local deadline_ms=$(( $(date +%s%N) / 1000000 + 2000 ))
+  # Generous timeout: cross-host CI runners take 3-5 s to login on
+  # serial + run the inject script + echo the marker back. We only
+  # reach this code path when wait_for_ssh's probe-first attempt
+  # (v2.5.32) failed, i.e. the host's pub key isn't already in the
+  # guest's authorized_keys — that's cross-host warm restore.
+  # Aggressively short timeouts here were the v2.5.31 trim that
+  # was correct for M3 same-host (where the marker never fires
+  # because inject is a no-op) but actively broke CI cross-VM
+  # (8 s isn't enough for the slow runner; v2.5.36 returns to 10 s).
+  # The cost is paid only on cross-host warm — same-host short-
+  # circuits before reaching here.
+  local deadline_ms=$(( $(date +%s%N) / 1000000 + 10000 ))
   while [ "$(( $(date +%s%N) / 1000000 ))" -lt "$deadline_ms" ]; do
     if grep -q "$marker" "$outfile" 2>/dev/null; then
       kill "$pid" 2>/dev/null
@@ -472,7 +476,7 @@ inject_pubkey_via_serial() {
 
   kill "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
-  stderr "  ssh-key serial inject: marker '$marker' not seen in 2 s"
+  stderr "  ssh-key serial inject: marker '$marker' not seen in 10 s"
   stderr "  outfile size: $(wc -c < "$outfile" 2>/dev/null) bytes"
   stderr "  outfile head (first 500 bytes):"
   head -c 500 "$outfile" 2>/dev/null | tr -c '[:print:]\n' '?' >&2 || true

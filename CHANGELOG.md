@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.5.37 "inject timeout 2s → 10s on cross-host" 2026-05-27
+
+Bench against R17 fixture on ubuntu-latest CI exposed a
+regression in v2.5.32's probe-first SSH path on cross-VM warm
+restore:
+
+1. probe-first SSH probe fails (host A's key baked into base,
+   restored on host B with a different key) → ssh_already_ready=0,
+   inject_pubkey_via_serial called. Probe counts as 1
+   PerSourcePenalty failure.
+2. inject sends the new key via serial. v2.5.31 trimmed the
+   marker wait to 2 s for the M3 same-host case where the
+   marker never appears (inject command is a no-op there).
+3. On CI runners the marker DOES appear, but takes 3–5 s
+   (slower login + slower bash). 2 s deadline expires before
+   marker → inject returns 1 with "marker not seen", and
+   importantly, kills the socat connection before the guest
+   finishes appending the key to authorized_keys.
+4. wait_for_ssh starts probing. K2 still not in
+   authorized_keys → another 4 Permission denied failures →
+   PerSourcePenalty hits 5 → "Not allowed at this time" banner
+   → wait_for_ssh hits its 360-attempt cap and times out.
+
+Fix: bump the inject deadline back to 10 s. The v2.5.31 trim
+was correct for M3 same-host (which now short-circuits via
+v2.5.32's probe-first, never reaching this code), but on
+cross-host warm restore — the only case we still reach inject
+in — the budget needs to cover slow Linux/CI runners.
+
 ## 2.5.36 "patch-mode bugfixes — noclobber + --long=31" 2026-05-27
 
 Two bugs in v2.5.34's `AQ_MEMORY_SNAPSHOT=zstd-patch` path,
