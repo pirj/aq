@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.5.42 "wider cont retry budget after incoming migration (fix R23 flake)" 2026-05-28
+
+After v2.5.41 replaced `-incoming exec:pzstd` with `-incoming file:`,
+a different intermittent failure surfaced on Azure x86_64 KVM
+warm restores: `Error: VM did not transition to running after 30
+cont attempts` (~2/10 flake rate). The R20 inmigrate hang was
+masking this — when the cont loop never ran, the post-migrate
+transient state was invisible.
+
+Root cause: under cross-host CI nested Hyper-V, qemu remains in a
+transient post-incoming-migration state for longer than the
+30 × 0.2 s = 6 s `cont` retry budget. The state eventually settles
+to paused → cont accepted → running, but we exited the loop first.
+
+Fix: bump the budget to 150 × 0.2 s = 30 s (`AQ_CONT_MAX_ATTEMPTS`
+env override exposed for future tuning) and log the last
+`query-status` response when the loop exhausts — so any
+future failure leaves diagnostic breadcrumbs instead of a bare
+"did not transition" message.
+
 ## 2.5.41 "decompress .zst to disk before -incoming (fix R20 cross-host migration hang)" 2026-05-28
 
 ### `-incoming exec:pzstd` → pre-decompress + `-incoming file:`

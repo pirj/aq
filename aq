@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.41
+VERSION=2.5.42
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1608,19 +1608,28 @@ aq_start() {
       fi
       exit 1
     fi
+    # Send cont and poll for running. The 30/0.2s budget was too tight
+    # under cross-host CI nested Hyper-V — observed transient ~10 s
+    # post-migrate windows where qemu remained in non-running state.
+    # Generous budget: 150 attempts × 0.2 s = 30 s. The fast path
+    # (qemu auto-running after incoming migration) still breaks within
+    # one iteration, so this only costs time when there's a real
+    # transient.
     local cont_attempt=0
-    while [ $cont_attempt -lt 30 ]; do
+    local cont_max=${AQ_CONT_MAX_ATTEMPTS:-150}
+    local last_status=
+    while [ $cont_attempt -lt $cont_max ]; do
       qmp_hmp "$qmp_sock" 'cont' >/dev/null
       sleep 0.2
-      local status_resp
-      status_resp=$(qmp_send "$qmp_sock" '{"execute":"query-status"}')
-      case "$status_resp" in
+      last_status=$(qmp_send "$qmp_sock" '{"execute":"query-status"}')
+      case "$last_status" in
         *'"running": true'*) break ;;
       esac
       cont_attempt=$((cont_attempt + 1))
     done
-    if [ $cont_attempt -ge 30 ]; then
+    if [ $cont_attempt -ge $cont_max ]; then
       stderr "Error: VM did not transition to running after $cont_attempt cont attempts."
+      stderr "  last query-status response (truncated): ${last_status:0:500}"
       exit 1
     fi
     # Consumed by qemu — remove both possible forms.
