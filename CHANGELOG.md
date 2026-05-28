@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.5.41 "decompress .zst to disk before -incoming (fix R20 cross-host migration hang)" 2026-05-28
+
+### `-incoming exec:pzstd` → pre-decompress + `-incoming file:`
+
+R20: on Azure x86_64 KVM under Hyper-V (GH `ubuntu-latest` runners),
+`-incoming exec:pzstd -dc memory.bin.zst` reliably hangs in
+`inmigrate` state for >60 s after the producer's EOF on ~1.7 GiB
+memory images. 4/5 warm samples in benchmark-r17-r18 run
+[26560684291](https://github.com/pirj/snapcompose-rails-pg-example/actions/runs/26560684291)
+hit `Incoming migration did not apply after 300 polls`; the 1
+passing sample took `migrate=18211ms` — wildly variable even when
+it works. The `zstd-patch` path on the same fixture is 5/5 because
+it reconstructs to a raw file first and then uses `-incoming file:`.
+
+Hypothesis: `-incoming file:` lets qemu mmap the memory snapshot
+(random access, no producer back-pressure); `-incoming exec:` forces
+a pipe-driven read-chunk-then-apply loop that appears to deadlock
+with KVM's vmstate apply path under Hyper-V nesting. The patch
+path's `-incoming file:` always completes in ~1.6 s on the same
+runner.
+
+Fix: when `incoming-memory.bin.zst` is present, decompress it to
+`incoming-memory.bin` BEFORE launching qemu, then use `-incoming
+file:`. Behavior is now uniform across `zstd` and `zstd-patch`
+memory modes: qemu always reads from a raw file via mmap.
+
+Cost: M3 same-host warm restore goes from ~800 ms → ~926 ms (one
+extra ~400 ms `pzstd -dc` pass to disk for a 1530 MiB raw memory).
+Worth it for cross-host reliability.
+
+Escape hatch: `AQ_ZST_STREAM_INCOMING=1` keeps the old
+`-incoming exec:pzstd` behavior — for hosts where exec mode works
+well and warm-restore latency is critical (e.g. local dev loops
+on macOS HVF that have already established the path is fast).
+
+New AQ_TIMING line `  AQ_TIMING: zst_decompress=Nms (raw=NN MiB)`
+appears when AQ_TIMING is set so the decompression cost is
+visible.
+
 ## 2.5.40 "fix R17 cross-host inject; ssh IdentitiesOnly when AQ_HOST_KEY set" 2026-05-28
 
 ### Cross-host warm restore inject no longer returns 0 bytes

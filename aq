@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.40
+VERSION=2.5.41
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1461,22 +1461,53 @@ aq_start() {
   local incoming_file_zst="$BASE_DIR/$VM_NAME/incoming-memory.bin.zst"
   local incoming_file_plain="$BASE_DIR/$VM_NAME/incoming-memory.bin"
   if [ -f "$incoming_file_zst" ]; then
-    # Prefer pzstd: on multi-frame inputs it decompresses in parallel
-    # (~5× faster on M3 for our typical 500 MiB .zst, ~1 GiB/s aggregate).
-    # On legacy single-frame inputs (made by plain `zstd -T0`) it falls
-    # back to single-thread automatically. pzstd reads the same zstd
-    # format, so old caches keep working with no migration step.
-    local _decomp_cmd
-    if command -v pzstd >/dev/null 2>&1; then
-      _decomp_cmd="pzstd -dc"
-    elif command -v zstd >/dev/null 2>&1; then
-      _decomp_cmd="zstd -dc"
+    # Decompress to a raw file BEFORE launching qemu, then use
+    # `-incoming file:` (not `-incoming exec:pzstd -dc`). On Azure
+    # x86_64 KVM under Hyper-V, exec-mode incoming migration hangs
+    # in inmigrate state for >60 s after the producer's EOF on
+    # ~1.7 GiB memory images — R20 in meta/TODO.md.
+    # Hypothesis: qemu can mmap a regular file (random access, no
+    # back-pressure cycles with the producer) but cannot mmap a pipe,
+    # so exec-mode forces a chunk-by-chunk read-then-apply loop that
+    # appears to deadlock with KVM's vmstate apply path on certain
+    # hardware. Same memory.bin via file: applies in ~1.6 s on the
+    # same runner.
+    # Cost: an extra ~1-2 s on warm restore (the pzstd output now
+    # writes to disk before qemu reads it back). Worth it for
+    # cross-host reliability; pre-existing `AQ_ZST_STREAM_INCOMING=1`
+    # escape hatch keeps the old behavior for hosts where exec mode
+    # works well (M3 HVF) and warm latency is critical.
+    if [ -n "${AQ_ZST_STREAM_INCOMING:-}" ]; then
+      local _decomp_cmd
+      if command -v pzstd >/dev/null 2>&1; then
+        _decomp_cmd="pzstd -dc"
+      elif command -v zstd >/dev/null 2>&1; then
+        _decomp_cmd="zstd -dc"
+      else
+        stderr "Error: $incoming_file_zst present but neither pzstd nor zstd installed on the host."
+        exit 1
+      fi
+      incoming_args=(-incoming "exec:$_decomp_cmd $incoming_file_zst")
     else
-      stderr "Error: $incoming_file_zst present but neither pzstd nor zstd installed on the host."
-      stderr "  Either: brew install zstd (or zstd's pzstd binary), or remove the .zst and rely on a plain memory.bin."
-      exit 1
+      # Prefer pzstd: on multi-frame inputs it decompresses in parallel
+      # (~5× faster on M3 for our typical 500 MiB .zst).
+      local _decompress_t0=${EPOCHREALTIME//,/.}
+      if command -v pzstd >/dev/null 2>&1; then
+        pzstd -dc "$incoming_file_zst" > "$incoming_file_plain"
+      elif command -v zstd >/dev/null 2>&1; then
+        zstd -dc "$incoming_file_zst" > "$incoming_file_plain"
+      else
+        stderr "Error: $incoming_file_zst present but neither pzstd nor zstd installed on the host."
+        exit 1
+      fi
+      local _decompress_t1=${EPOCHREALTIME//,/.}
+      if [ -n "${AQ_TIMING:-}" ]; then
+        awk -v t0="$_decompress_t0" -v t1="$_decompress_t1" -v sz="$(stat -c %s "$incoming_file_plain" 2>/dev/null || stat -f %z "$incoming_file_plain")" \
+          'BEGIN { printf "  AQ_TIMING: zst_decompress=%.0fms (raw=%.1f MiB)\n", (t1-t0)*1000, sz/1048576 }' >&2
+      fi
+      rm -f "$incoming_file_zst"
+      incoming_args=(-incoming "file:$incoming_file_plain")
     fi
-    incoming_args=(-incoming "exec:$_decomp_cmd $incoming_file_zst")
   elif [ -f "$incoming_file_plain" ]; then
     incoming_args=(-incoming "file:$incoming_file_plain")
   fi
