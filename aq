@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.39
+VERSION=2.5.40
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -402,11 +402,16 @@ aq_host_pubkey() {
   done
 }
 
-# `ssh -i $AQ_HOST_KEY` args when AQ_HOST_KEY is set. Empty otherwise
-# (ssh falls back to its default key lookup in ~/.ssh/).
+# `ssh -i $AQ_HOST_KEY` args when AQ_HOST_KEY is set, plus
+# IdentitiesOnly=yes and IdentityAgent=none so ssh actually
+# uses only this key (without that, ssh keeps trying the
+# user's default ~/.ssh/id_* keys + agent identities, which
+# makes AQ_HOST_KEY ineffective when those happen to be in
+# the guest's authorized_keys). Empty otherwise (ssh falls
+# back to its default key lookup in ~/.ssh/ + agent).
 aq_ssh_id_args() {
   if [ -n "${AQ_HOST_KEY:-}" ] && [ -f "$AQ_HOST_KEY" ]; then
-    printf -- '-i %s' "$AQ_HOST_KEY"
+    printf -- '-i %s -o IdentitiesOnly=yes -o IdentityAgent=none' "$AQ_HOST_KEY"
   fi
 }
 
@@ -435,37 +440,85 @@ inject_pubkey_via_serial() {
   local guest_cmd
   guest_cmd="for d in /root /home/rlock; do [ -d \"\$d\" ] || continue; mkdir -p \"\$d/.ssh\"; chmod 700 \"\$d/.ssh\"; if ! grep -qxF '$pubkey' \"\$d/.ssh/authorized_keys\" 2>/dev/null; then echo '$pubkey' >> \"\$d/.ssh/authorized_keys\"; chmod 600 \"\$d/.ssh/authorized_keys\"; fi; chown -R \$(stat -c %U \"\$d\" 2>/dev/null || echo root): \"\$d/.ssh\" 2>/dev/null || true; done; echo $marker"
 
-  # Background socat with output captured to outfile. We send the
-  # 3 printf lines to its stdin via a here-string (no separate
-  # subshell that would hold the pipeline open). socat reads stdin,
-  # forwards to guest's serial, then on stdin-EOF half-closes and
-  # keeps reading guest output back to outfile until we kill it.
+  # Two phases via a single socat session driven by a named pipe so we
+  # can keep the connection open across an inter-phase pause:
   #
-  # Why a here-string and not `{ printf; sleep N; } | socat &`:
-  # AQ_TIMING in CI Round 10 showed the `sleep N` placeholder in the
-  # writer subshell blocked the whole pipeline for that full N
-  # seconds — even after kill on socat, bash's `wait $pid` somehow
-  # waited for the writer subshell too. Here-string sidesteps that
-  # by having no writer subshell at all.
-  local stdin_blob
-  stdin_blob=$(printf '\nroot\n%s\n' "$guest_cmd")
-  socat - "UNIX-CONNECT:$sock" >| "$outfile" 2>&1 <<<"$stdin_blob" &
+  #   Phase 1: emit `\nroot\necho <ready_marker>\n` to log in via getty
+  #            and confirm the shell prompt is up. getty/login on Alpine
+  #            calls tcflush(TCIFLUSH) before exec'ing the shell, which
+  #            DROPS any input sent ahead of the login handoff. So we
+  #            cannot just blast the whole script at once — bytes after
+  #            `root\n` get flushed and the marker never echoes.
+  #   Phase 2: once the ready marker is seen, emit the actual key-inject
+  #            commands plus the final `<marker>` echo. By this point the
+  #            shell is reading from the UART and there's no flush window.
+  #
+  # The named pipe lets the writer hold stdin open across the inter-phase
+  # pause without socat seeing EOF (which would cause it to half-close
+  # the UNIX side at its 0.5 s default lingertime — losing the guest's
+  # reply, the symptom called out as R17 in meta/TODO.md: cross-host
+  # warm inject returned 0 bytes back from the guest).
+  local ready_marker="AQ_INJECT_READY_$$_$RANDOM"
+  local fifo
+  fifo=$(mktemp -u -t aq-inject-fifo.XXXXXX)
+  mkfifo -m 600 "$fifo"
+  # Open the fifo bidir on fd 9 in this shell. <>"$fifo" does NOT block
+  # the way `< "$fifo"` or `> "$fifo"` do; both ends of the pipe are now
+  # held open by this single fd. socat will inherit fd 9 as its stdin
+  # (via `<&9` below), and this shell writes phases to fd 9. Closing
+  # fd 9 in this shell after polling is what eventually lets socat see
+  # EOF and exit cleanly.
+  exec 9<>"$fifo"
+  rm -f "$fifo"       # unlink, fd stays alive
+  socat - "UNIX-CONNECT:$sock" >| "$outfile" 2>&1 <&9 &
   local pid=$!
 
-  # Generous timeout: cross-host CI runners take 3-5 s to login on
-  # serial + run the inject script + echo the marker back. We only
-  # reach this code path when wait_for_ssh's probe-first attempt
-  # (v2.5.32) failed, i.e. the host's pub key isn't already in the
-  # guest's authorized_keys — that's cross-host warm restore.
-  # Aggressively short timeouts here were the v2.5.31 trim that
-  # was correct for M3 same-host (where the marker never fires
-  # because inject is a no-op) but actively broke CI cross-VM
-  # (8 s isn't enough for the slow runner; v2.5.36 returns to 10 s).
-  # The cost is paid only on cross-host warm — same-host short-
-  # circuits before reaching here.
+  # Phase 1a: send `\nroot\n` (getty login). Stop here — any bytes
+  # sent after `root\n` but before the shell exec's would be discarded
+  # by login's tcflush(TCIFLUSH). Wait for the shell prompt to appear
+  # in the outfile before continuing.
+  printf '\nroot\n' >&9
+
+  # Poll for the shell prompt (`# ` is the unique tail of bash/ash's
+  # PS1 for root). Up to 5 s on cross-host CI; same-host is ~200 ms.
+  local prompt_deadline=$(( $(date +%s%N) / 1000000 + 5000 ))
+  local shell_up=0
+  while [ "$(( $(date +%s%N) / 1000000 ))" -lt "$prompt_deadline" ]; do
+    if grep -q '# ' "$outfile" 2>/dev/null; then
+      shell_up=1
+      break
+    fi
+    sleep 0.05
+  done
+
+  # Phase 1b: emit the ready-marker echo so we can confirm the shell is
+  # actually reading from stdin (not racing with terminal init / [6n).
+  local ready=0
+  if [ "$shell_up" = 1 ]; then
+    printf 'echo %s\n' "$ready_marker" >&9
+    local ready_deadline=$(( $(date +%s%N) / 1000000 + 3000 ))
+    while [ "$(( $(date +%s%N) / 1000000 ))" -lt "$ready_deadline" ]; do
+      if grep -q "$ready_marker" "$outfile" 2>/dev/null; then
+        ready=1
+        break
+      fi
+      sleep 0.05
+    done
+  fi
+
+  if [ "$ready" = 1 ]; then
+    # Phase 2: the actual key-inject + final marker.
+    printf '%s\n' "$guest_cmd" >&9
+  fi
+
+  # Generous overall timeout for marker arrival. Cross-host CI runners
+  # take 3-5 s to login on serial + run the inject script + echo the
+  # marker back. We only reach this code path when wait_for_ssh's
+  # probe-first attempt failed (cross-host warm restore).
   local deadline_ms=$(( $(date +%s%N) / 1000000 + 10000 ))
   while [ "$(( $(date +%s%N) / 1000000 ))" -lt "$deadline_ms" ]; do
     if grep -q "$marker" "$outfile" 2>/dev/null; then
+      exec 9<&-
       kill "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
       rm -f "$outfile"
@@ -474,6 +527,7 @@ inject_pubkey_via_serial() {
     sleep 0.05
   done
 
+  exec 8>&-; exec 9<&-
   kill "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
   stderr "  ssh-key serial inject: marker '$marker' not seen in 10 s"

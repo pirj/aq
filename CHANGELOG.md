@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.5.40 "fix R17 cross-host inject; ssh IdentitiesOnly when AQ_HOST_KEY set" 2026-05-28
+
+### Cross-host warm restore inject no longer returns 0 bytes
+
+R17 root-cause (cross-VM warm restore failing with "outfile size: 0
+bytes" on Azure x86_64 KVM CI, also reproducible on M3 with
+`AQ_HOST_KEY` pointing at a key NOT in the cached guest's
+authorized_keys): two layered bugs in `inject_pubkey_via_serial`.
+
+1. `socat - UNIX-CONNECT:sock <<<"$blob" &` — the here-string
+   closes socat's stdin immediately, socat half-closes the UNIX
+   side at its 0.5 s lingertime, and the guest's reply (which
+   arrives ~100 ms later) lands on a closed socket. Confirmed
+   experimentally on macOS HVF: 5 different invocation variants
+   tested, all background patterns with synchronous EOF returned 0
+   bytes; only writer-keeps-pipe-open patterns received guest
+   output.
+
+2. Sending `\nroot\n<cmd>\n` in a single write is racy on Alpine
+   getty: when getty processes `root\n` and exec's `/bin/login`,
+   login calls `tcflush(TCIFLUSH)` to discard pending input
+   (a security measure against passwords typed ahead of the
+   prompt). Any bytes sent after `root\n` and before the shell
+   reads stdin get silently dropped, so the inject command never
+   runs and the marker never echoes back.
+
+Fix: hold socat's stdin open via a bidirectionally-opened fifo on
+fd 9, and split the write into three phases:
+
+  Phase 1a: `\nroot\n`, then poll for shell prompt (`# `).
+  Phase 1b: `echo <ready_marker>\n`, poll for that marker — proves
+            shell is actually reading from stdin (rules out the
+            terminal-init `\e[6n` cursor-position-request race).
+  Phase 2 : the actual `for d in /root /home/rlock; ...; echo <marker>`.
+
+Measured on M3 with the rails-pg-sample fixture:
+- Same-host probe-first path (K1 already in authorized_keys):
+  unchanged at ~975 ms total, inject=76 ms (no-op).
+- Cross-host inject path (forced via `AQ_HOST_KEY=<different-key>`):
+  ~1700 ms total, inject=750 ms (the phase 1a→1b→2 cascade with
+  inter-phase waits for ready signals).
+
+### `AQ_HOST_KEY` now forces SSH to use ONLY that key
+
+`aq_ssh_id_args` previously only added `-i $AQ_HOST_KEY`; ssh would
+still fall through to ~/.ssh/id_* and ssh-agent identities, so when
+the host's normal key happened to be in the guest's authorized_keys
+the AQ_HOST_KEY override was silently ignored. Added
+`-o IdentitiesOnly=yes -o IdentityAgent=none`.
+
+This is also what made the R17 local repro possible — without this
+fix, `AQ_HOST_KEY=k2` would still authenticate via the user's K1,
+masking the cross-host code path.
+
 ## 2.5.39 "drop PATCH_DIAG instrumentation" 2026-05-28
 
 R18 root-cause is identified (rlock chain-reconstruction logic bug,
