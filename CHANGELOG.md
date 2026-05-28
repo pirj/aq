@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.5.44 "AQ_CPU override for cross-host-family migration (R24 root cause)" 2026-05-28
+
+R24 internal-error post-incoming-migration is root-caused: GH
+ubuntu-latest runner pool mixes Intel (Xeon Platinum 8370C) and
+AMD Azure SKUs. `-cpu host` exposed the SAVE host's vendor — if
+save host was AMD with SVM in CPUID, the guest's `EFER.SVME` got
+set to 1. On restore to an Intel host, that bit is reserved-MBZ in
+IA32_EFER, so the first VM-entry fails with `KVM: entry failed,
+hardware error 0x80000021` (VMX_INVALID_GUEST_STATE).
+
+Diagnostic from CI run 26597337286 warm-zstd-patch (5):
+```
+EFER=0000000000001d01
+   = SCE | LME | LMA | NXE | SVME(bit12, AMD-only)
+KVM: entry failed, hardware error 0x80000021
+If you're running a guest on an Intel machine without unrestricted
+mode support, the failure can be most likely due to the guest
+entering an invalid state for Intel VT. ...
+```
+
+Same failure mode is documented across QEMU bug trackers as the
+canonical cross-CPU-family migration failure with `-cpu host` (RH
+BZ #1961519, Debian #831761, kubevirt #5068, LP #2131822).
+
+Fix: surface `AQ_CPU` env override. Default stays `host` (preserves
+local dev / single-host workflows). Cross-host CI should set
+e.g. `AQ_CPU=Skylake-Server-v4` so the guest CPUID never exposes
+SVM regardless of underlying host vendor → guest never sets
+EFER.SVME → migration works across the Azure pool. The
+companion change in `setup-snapcompose` v3.0.7 wires this up
+automatically on Linux runners.
+
+Note: cached snapshots taken under the old `-cpu host` may have
+SVME=1 baked into the saved vmstate. Bump the cache-key-prefix
+when migrating to AQ_CPU, otherwise warm restores load stale
+state and the same error persists.
+
 ## 2.5.43 "fast-fail on qemu internal-error state during cont (R24)" 2026-05-28
 
 CI run 26580759406 surfaced a second post-incoming-migration failure

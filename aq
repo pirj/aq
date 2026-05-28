@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.43
+VERSION=2.5.44
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -597,7 +597,7 @@ bootstrap_base_image() {
     [ "$need_extract" = "1" ] && nic_args="$nic_args,hostfwd=tcp::$extract_port-:8080"
 
     $QEMU_BIN \
-      -machine $MACHINE_OPTS -accel $ACCEL -cpu host -m 1G \
+      -machine $MACHINE_OPTS -accel $ACCEL -cpu ${AQ_CPU:-host} -m 1G \
       -drive file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0 \
       $(uefi_vars_args $BASE_DIR/$ARCH) \
       -drive if=virtio,file="$BASE_DIR/$ARCH/wip-$fname",format=raw,cache=none \
@@ -1566,7 +1566,7 @@ aq_start() {
   # (locale-dependent). Replace , with . so awk parses it as float.
   local _t0=${EPOCHREALTIME//,/.} _t_qemu _t_migrate _t_cont _t_inject _t_ssh
   $QEMU_BIN \
-    -machine $machine_opts -accel $ACCEL -cpu host -m "${vm_memory_g}G" \
+    -machine $machine_opts -accel $ACCEL -cpu ${AQ_CPU:-host} -m "${vm_memory_g}G" \
     "${boot_args[@]}" \
     -drive if=virtio,file=$BASE_DIR/$VM_NAME/storage.qcow2${AQ_DRIVE_EXTRA:-} \
     -nic user,model=virtio-net-pci,$HOST_FORWARDS \
