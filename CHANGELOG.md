@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.39 "drop PATCH_DIAG instrumentation" 2026-05-28
+
+R18 root-cause is identified (rlock chain-reconstruction logic bug,
+fixed in rlock v0.1.11), so the encode-side PATCH_DIAG sha256
+diagnostic in `aq snapshot create` is no longer needed. Removed.
+
 ## 2.5.38 "patch-from refs use single-thread zstd for determinism" 2026-05-27
 
 CI re-bench against the 3-live-layer rails-pg-sample fixture
