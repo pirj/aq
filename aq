@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.42
+VERSION=2.5.43
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1615,6 +1615,13 @@ aq_start() {
     # (qemu auto-running after incoming migration) still breaks within
     # one iteration, so this only costs time when there's a real
     # transient.
+    #
+    # Fast-fail on `internal-error` state: that's qemu telling us it
+    # hit an unrecoverable post-migration condition (seen on Azure
+    # x86_64 KVM under nested Hyper-V at ~10 % rate — R24 in
+    # meta/TODO.md). No amount of cont retries will move it to
+    # running; bail immediately with the diagnostic so the caller
+    # can decide to retry the whole warm flow from cache.
     local cont_attempt=0
     local cont_max=${AQ_CONT_MAX_ATTEMPTS:-150}
     local last_status=
@@ -1624,6 +1631,13 @@ aq_start() {
       last_status=$(qmp_send "$qmp_sock" '{"execute":"query-status"}')
       case "$last_status" in
         *'"running": true'*) break ;;
+        *'"status": "internal-error"'*)
+          stderr "Error: qemu entered 'internal-error' state during incoming migration cont."
+          stderr "  This is a KVM-level migration apply failure, not a transient — no point retrying cont."
+          stderr "  Likely a flake on this runner (Azure x86_64 KVM under nested Hyper-V); retry the job."
+          stderr "  last query-status: ${last_status:0:500}"
+          exit 1
+          ;;
       esac
       cont_attempt=$((cont_attempt + 1))
     done

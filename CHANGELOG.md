@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.5.43 "fast-fail on qemu internal-error state during cont (R24)" 2026-05-28
+
+CI run 26580759406 surfaced a second post-incoming-migration failure
+mode that the R23 widened cont budget can't fix: qemu enters
+`internal-error` state (`{"status": "internal-error", "running":
+false}`). That's a KVM-level migration apply failure, not a
+transient — looping `cont` for 30 s yields the same result and just
+wastes wall-clock.
+
+Fast-fail with a clear diagnostic the moment `internal-error` is
+seen, so callers know to retry the whole warm flow from cache
+rather than wait out the cont budget.
+
+Tracked as R24 in meta/TODO.md. Observed at ~1/10 rate on Azure
+x86_64 KVM under nested Hyper-V; same code path on macOS HVF
+always succeeds.
+
 ## 2.5.42 "wider cont retry budget after incoming migration (fix R23 flake)" 2026-05-28
 
 After v2.5.41 replaced `-incoming exec:pzstd` with `-incoming file:`,
