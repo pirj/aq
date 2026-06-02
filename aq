@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.49
+VERSION=2.5.50
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -811,8 +811,19 @@ SETUP_CONF_END
 
     if [ "$need_extract" = "0" ]; then
       # Kernel files already cached for this arch — just run the cleanup
-      # and unmount (matches the pre-extraction behaviour).
-      echo "mkdir -p /target; mount /dev/vda3 /target; $cleanup; umount /target" | socat STDIO UNIX:command.sock
+      # and unmount. Trial-mount each /dev/vda* (sh `for ... do … done`
+      # all on a single line — multi-line scripts over the live ISO's
+      # raw serial channel suffer interleaving from background kernel
+      # messages and udhcpc output), looking for the installed rootfs
+      # (presence of /etc/alpine-release marks the Alpine root partition
+      # unambiguously). The previous hardcoded `/dev/vda3` worked on
+      # x86_64 but not on aarch64 (where setup-disk's sys-mode partition
+      # layout can place root on /dev/vda2), silently writing the cleanup
+      # script's redirects into the live-ISO RAM filesystem instead of
+      # the installed root — leaving /root/setup.conf, /root/.ash_history,
+      # and the Alpine stock /etc/motd in place. Caught by
+      # tests/guest-cleanup.sh 2026-06-02.
+      echo "mkdir -p /target; for p in /dev/vda*; do [ -b \"\$p\" ] || continue; mount -t ext4 \"\$p\" /target 2>/dev/null || continue; if [ -f /target/etc/alpine-release ]; then $cleanup; umount /target; break; else umount /target 2>/dev/null; fi; done" | socat STDIO UNIX:command.sock
       sleep 2
     else
       stderr "Extracting kernel + initramfs (one-time per arch, ~10 s)..."

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.5.50 "bootstrap cleanup: trial-mount /dev/vda* (aarch64 fix)" 2026-06-02
+
+Surfaced by `tests/guest-cleanup.sh` on aarch64 macOS host
+2026-06-02. The `need_extract=0` branch of `bootstrap_base_image`
+hardcoded `/dev/vda3` as the installed-root mount source — fine
+on x86_64 setup-disk's sys-mode layout (ESP + /boot + /), but
+aarch64's layout can place root on /dev/vda2. The mount silently
+failed, `/target` stayed an empty live-ISO RAM directory, and
+the `$cleanup` redirects landed in tmpfs instead of the installed
+root. Result: `/root/setup.conf`, `/root/.ash_history` AND the
+stock Alpine `/etc/motd` all survived into the cached base.
+
+Replaces the hardcoded path with a trial-mount loop over
+`/dev/vda*`, picking the partition whose `/etc/alpine-release`
+file exists — same shape as the `need_extract=1` branch's
+extraction loop (which is why that path was already arch-safe).
+Condensed to a single line because multi-line scripts over the
+live ISO's raw serial chardev suffer interleaving from kernel
+messages + udhcpc output.
+
+Validated by `tests/guest-cleanup.sh` going green on aarch64:
+all three cleanups land (motd is the aq banner, setup.conf
+absent, .ash_history absent).
+
 ## 2.5.49 "ensure_base_image: gracefully skip flock on macOS" 2026-06-02
 
 Regression from v2.5.45's flock fix: `flock(1)` isn't part of
