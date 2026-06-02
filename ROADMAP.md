@@ -62,6 +62,31 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 - [ ] `.config/aq.toml` for configuring the SSH key?
 - [ ] fwd options: tcp/udp, hostaddr, guestaddr
 
+### Concurrency
+
+- [ ] **Concurrent base-image bootstrap race (par-cold from
+  multiple `aq new` invocations).** Found by snapcompose-benchmark
+  Phase 3 walking-skeleton on 2026-06-02. Symptom: when two `snapc
+  run` processes execute simultaneously on an empty cache, both
+  detect that `~/.local/share/aq/<arch>/base/...` is missing and
+  both attempt `bootstrap_base_image`. The log shows two parallel
+  wget downloads of `alpine-virt-...iso` (one ending in `.iso.1`,
+  GNU wget's name-conflict suffix) and the boot path then exits
+  2 mid-GRUB.
+  - Repro: `(cd a && snapc run -- true) & (cd b && snapc run --
+    true) &` with cleared cache, where `a` and `b` are snapcompose
+    projects.
+  - Failing run:
+    https://github.com/pirj/snapcompose-benchmark/actions/runs/26804727138
+  - Fix sketch: `flock` around the bootstrap entry point in
+    `bootstrap_base_image()`. Second arrival should wait, observe
+    base is now present, and skip its own bootstrap. Lockfile under
+    `~/.local/share/aq/<arch>/base/.bootstrap.lock`.
+  - Until fixed, `snapcompose-benchmark`'s par/cold cell is
+    expected to trip and is reported as `✗ aq-race` per the
+    methodology's cap-trip convention. Warm/par is unaffected
+    (base is already cached on the warm path).
+
 ### QEMU tuning
 
 - [-] `aio=native/io_uring` — DECLINED with measurement (see `docs/benchmarks/2026-05-19-aq-start-tuning.md`). Neither beats default `threads`+writeback on warm `aq start`; canonical `aio=io_uring,cache.direct=on` runs ~50 ms slower median. Warm boot is page-cache-dominated, not async-I/O-dominated.
