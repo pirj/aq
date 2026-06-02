@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.5.47 "flock lockfile open mode (noclobber compat)" 2026-06-02
+
+Follow-up to v2.5.45's flock fix. The lockfile redirection
+used `9>` (truncate-create), but aq's top-of-file `set -fC`
+(noclobber) makes `9>` refuse to overwrite an existing file —
+so the second arriving process, the very case this lock
+exists to coordinate, failed with "cannot overwrite existing
+file" before even reaching `flock`. Surfaced by snapcompose-
+benchmark Phase 3 walking-skeleton re-run with v2.5.45
+(run 26805826000, job 79022953872).
+
+Switched to `9>>` (append). flock operates on the descriptor's
+inode regardless of mode; append-mode is noclobber-safe and
+preserves the previous contents (which are unused — lockfile
+is empty by design).
+
 ## 2.5.46 "qmp_wait_migrate_incoming budget scales with staged memory" 2026-06-02
 
 Companion to v2.5.45's par-cold fix. Surfaced by snapcompose-

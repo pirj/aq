@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.46
+VERSION=2.5.47
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -574,12 +574,19 @@ ensure_base_image() {
   # then re-checks after acquiring the lock — if the first arrival
   # produced the base, skip our own bootstrap.
   mkdir -p "$BASE_DIR/$ARCH"
+  # Open the lockfile via `9>>` (append) rather than `9>` (truncate):
+  # `set -fC` (noclobber) at the top of this script makes `9>` refuse
+  # to overwrite an existing file, so the SECOND arriving process —
+  # the very case this lock exists to coordinate — would fail with
+  # "cannot overwrite existing file" before reaching `flock`.
+  # `>>` is allowed under noclobber, creates if missing, and flock
+  # operates on the descriptor's underlying inode regardless of mode.
   (
     flock 9
     if [ ! -f "$BASE_DIR/$ARCH/$fname" ]; then
       bootstrap_base_image "$size"
     fi
-  ) 9>"$BASE_DIR/$ARCH/.bootstrap.lock"
+  ) 9>>"$BASE_DIR/$ARCH/.bootstrap.lock"
 }
 
 bootstrap_base_image() {
