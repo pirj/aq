@@ -83,6 +83,16 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
     poll budget proportional to the staged memory size, or
     b) replace polling with a QMP event-driven wait
     (`MIGRATION` event with `status: completed`).
+  - **2026-06-02 update**: v2.5.46 (300+150/GiB) shipped the
+    proportional-budget heuristic; v2.5.48 bumped it further to
+    (900+600/GiB). snapcompose-benchmark run 26810957993 STILL
+    tripped at 2100 polls (~7 min) for ~2 GiB incoming. The
+    poll-budget approach is hitting diminishing returns under
+    GH ubuntu-latest's hot-dockerd contention — 7 min for one
+    migration apply suggests genuine consumer stall, not just
+    a too-tight clock. Next step: implement option (b), the
+    QMP `MIGRATION` event-driven wait. Polling for any longer
+    is masking the underlying perf issue.
   - Sanity check: monolith/cold (one VM, same chain) completes
     successfully on the same runner. The trip is specific to the
     multi-VM "second VM walks its OWN chain after the first VM
