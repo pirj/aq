@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.45
+VERSION=2.5.46
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1260,7 +1260,36 @@ qmp_send() {
 # catch the post-migrate window).
 qmp_wait_migrate_incoming() {
   local sock=$1
-  local max_attempts=${2:-300}
+  # max_attempts × 200 ms sleep = wall-clock budget. Default ramps with
+  # the staged incoming memory size: ~150 polls per GiB plus 300 baseline.
+  # rails-pg-sample (~500 MiB) keeps the historic 300-poll / 60 s budget;
+  # multi-VM chain reconstructions concatenate live layers into 1–2+ GiB
+  # of incoming-memory.bin and need proportionally more time for qemu's
+  # vmstate apply.
+  #
+  # Caller can still pass an explicit max_attempts as $2 to override.
+  local max_attempts="${2:-}"
+  if [ -z "$max_attempts" ]; then
+    local incoming_bytes=0
+    if [ -f "$BASE_DIR/$VM_NAME/incoming-memory.bin" ]; then
+      incoming_bytes=$(stat -c%s "$BASE_DIR/$VM_NAME/incoming-memory.bin" 2>/dev/null \
+                       || stat -f%z "$BASE_DIR/$VM_NAME/incoming-memory.bin" 2>/dev/null \
+                       || echo 0)
+    elif [ -f "$BASE_DIR/$VM_NAME/incoming-memory.bin.zst" ]; then
+      # Compressed input — assume ~3× expansion, so the post-decompress
+      # size is roughly 3× the .zst size. Better to err on the larger side.
+      local zst_bytes
+      zst_bytes=$(stat -c%s "$BASE_DIR/$VM_NAME/incoming-memory.bin.zst" 2>/dev/null \
+                  || stat -f%z "$BASE_DIR/$VM_NAME/incoming-memory.bin.zst" 2>/dev/null \
+                  || echo 0)
+      incoming_bytes=$((zst_bytes * 3))
+    fi
+    local incoming_gib=$((incoming_bytes / 1073741824))
+    max_attempts=$((300 + incoming_gib * 150))
+    if [ -n "${AQ_TIMING:-}" ]; then
+      stderr "  AQ_TIMING: qmp_wait_migrate_incoming budget=${max_attempts} polls ($((max_attempts / 5))s) for ~$((incoming_bytes / 1048576)) MiB incoming"
+    fi
+  fi
   local attempt=0
   while [ $attempt -lt $max_attempts ]; do
     local resp

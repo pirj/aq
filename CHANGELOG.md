@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.5.46 "qmp_wait_migrate_incoming budget scales with staged memory" 2026-06-02
+
+Companion to v2.5.45's par-cold fix. Surfaced by snapcompose-
+benchmark Phase 3 walking-skeleton's `+1 seq cold` cell on
+2026-06-02 (run 26804727138, job 79019327924). After VM #1
+walked its chain successfully, VM #2 at the docker-compose
+layer staged a 1.25 GiB concatenated memory.bin.zst from rlock's
+chain reconstruction. QEMU's vmstate apply needed longer than
+the historic fixed 60 s poll budget (300 × 200 ms), and
+`qmp_wait_migrate_incoming` bailed before migration completed
+with "Incoming migration did not apply".
+
+The default now scales with the staged incoming memory size:
+~150 polls per GiB on top of the historic 300 baseline. rails-
+pg-sample (~500 MiB) keeps its existing budget; the bench
+fixture's 1.25 GiB staging gets ~3.5 min — well within real
+qemu apply time. Compressed input (`.zst`) is assumed at ~3×
+expansion. Explicit `max_attempts` arg ($2) still overrides.
+
+AQ_TIMING=1 prints the computed budget for visibility.
+
 ## 2.5.45 "flock around bootstrap_base_image (par-cold race)" 2026-06-02
 
 Concurrent `aq new` invocations on a fresh cache used to race
