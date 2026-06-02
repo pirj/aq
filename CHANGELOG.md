@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.5.48 "qmp_wait_migrate_incoming budget — bigger baseline + per-GiB" 2026-06-02
+
+Follow-up to v2.5.46's size-scaled migrate-incoming budget. That
+version raised the budget from 300 (60 s) to 300 + 150/GiB
+(~90 s for 1 GiB), but real-world GH ubuntu-latest runners with
+hot dockerd + concurrent VM build still need >90 s for a 1 GiB
+apply. snapcompose-benchmark Phase 3 walking-skeleton re-tripped
+this in run 26807611414 / job 79029041845.
+
+Bumps baseline to 900 polls (3 min) + 600/GiB (2 min), and
+rounds GiB up so any non-zero incoming gets at least 1 GiB worth
+of budget. Compressed-input estimate raised from 3× to 5×
+expansion (live snapshots compress well; better to overshoot).
+
+New budget shape:
+* 0 GiB raw   → 900 polls (3 min)
+* 1 GiB raw   → 1500 polls (5 min)
+* 3 GiB raw   → 2700 polls (9 min)
+* 6 GiB raw   → 4500 polls (15 min)
+
 ## 2.5.47 "flock lockfile open mode (noclobber compat)" 2026-06-02
 
 Follow-up to v2.5.45's flock fix. The lockfile redirection

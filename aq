@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.47
+VERSION=2.5.48
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1283,16 +1283,25 @@ qmp_wait_migrate_incoming() {
                        || stat -f%z "$BASE_DIR/$VM_NAME/incoming-memory.bin" 2>/dev/null \
                        || echo 0)
     elif [ -f "$BASE_DIR/$VM_NAME/incoming-memory.bin.zst" ]; then
-      # Compressed input — assume ~3× expansion, so the post-decompress
-      # size is roughly 3× the .zst size. Better to err on the larger side.
+      # Compressed input — assume ~5× expansion, conservative for
+      # the highly-compressible-zero-pages case typical of live
+      # snapshots taken right after VM boot. Err on the larger side.
       local zst_bytes
       zst_bytes=$(stat -c%s "$BASE_DIR/$VM_NAME/incoming-memory.bin.zst" 2>/dev/null \
                   || stat -f%z "$BASE_DIR/$VM_NAME/incoming-memory.bin.zst" 2>/dev/null \
                   || echo 0)
-      incoming_bytes=$((zst_bytes * 3))
+      incoming_bytes=$((zst_bytes * 5))
     fi
-    local incoming_gib=$((incoming_bytes / 1073741824))
-    max_attempts=$((300 + incoming_gib * 150))
+    # GiB rounded up via "+ 1073741823" so that any non-zero
+    # incoming gets at least 1 GiB worth of poll budget.
+    local incoming_gib=$(( (incoming_bytes + 1073741823) / 1073741824 ))
+    # Baseline 900 polls (3 min) + 600 polls per estimated GiB
+    # (2 min). Slow runners on a hot dockerd + concurrent VM build
+    # can apply migration well over a minute per GiB; the old
+    # 300 + 150/GiB budget tripped at 450 polls (90 s) for the
+    # bench fixture's mise-base layer. Generous but bounded:
+    # 1 GiB → 1500 polls (5 min), 3 GiB → 2700 (9 min).
+    max_attempts=$((900 + incoming_gib * 600))
     if [ -n "${AQ_TIMING:-}" ]; then
       stderr "  AQ_TIMING: qmp_wait_migrate_incoming budget=${max_attempts} polls ($((max_attempts / 5))s) for ~$((incoming_bytes / 1048576)) MiB incoming"
     fi
