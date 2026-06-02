@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.44
+VERSION=2.5.45
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -564,7 +564,22 @@ wait_for() {
 ensure_base_image() {
   local size="$1"
   local fname; fname=$(alpine_base_for_size "$size")
-  [ -f "$BASE_DIR/$ARCH/$fname" ] || bootstrap_base_image "$size"
+  # Fast-path: base already present, no lock acquisition needed.
+  if [ -f "$BASE_DIR/$ARCH/$fname" ]; then
+    return 0
+  fi
+  # Concurrent `aq new` callers on a fresh cache must not race the
+  # bootstrap. Wrap the bootstrap step in a flock on
+  # `<base-dir>/<arch>/.bootstrap.lock`. Second arrival blocks here,
+  # then re-checks after acquiring the lock — if the first arrival
+  # produced the base, skip our own bootstrap.
+  mkdir -p "$BASE_DIR/$ARCH"
+  (
+    flock 9
+    if [ ! -f "$BASE_DIR/$ARCH/$fname" ]; then
+      bootstrap_base_image "$size"
+    fi
+  ) 9>"$BASE_DIR/$ARCH/.bootstrap.lock"
 }
 
 bootstrap_base_image() {

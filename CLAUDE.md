@@ -27,6 +27,13 @@ remains, see [`ROADMAP.md`](ROADMAP.md).
   CHANGELOG / DECISIONS). When bumping QEMU, run the full
   benchmark suite (in `~/source/ai.rlock/meta/benchmark-*.md`)
   before declaring the upgrade safe.
+- **Performance releases run the snapcompose benchmark.** Any aq
+  release that could shift cold / warm / warm-from-patch timings
+  (QEMU bump, snapshot format change, kernel/initramfs change,
+  boot-path change) must trigger the `snapcompose-benchmark`
+  workflow and update results in `../snapcompose/README.md`
+  before the release tag is cut. Methodology lives in
+  `../snapcompose/docs/bench/2026-05-29-microservices-benchmark.md`.
 - **No GUI guest.** Text-mode Alpine, console + ssh only. No X,
   no Wayland.
 

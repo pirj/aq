@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.5.45 "flock around bootstrap_base_image (par-cold race)" 2026-06-02
+
+Concurrent `aq new` invocations on a fresh cache used to race
+`bootstrap_base_image`: both would see the per-size base file
+missing, both would call `download_alpine_iso` (second wget
+landed on `.iso.1`), and the parallel boot path would crash mid-
+GRUB with `exit code 2`. Surfaced by the snapcompose-benchmark
+Phase 3 walking-skeleton's `+1 par cold` cell on 2026-06-02
+(run 26804727138, job 79019327904).
+
+`ensure_base_image` now fast-paths the present-file case (no lock
+acquisition) and, on absence, takes a `flock` on
+`<base-dir>/<arch>/.bootstrap.lock` before bootstrap. Second
+arrival blocks at the lock, then re-checks file presence after
+acquiring — if the first arrival produced the base, skip our own
+bootstrap entirely.
+
+Host dependency: `flock` (from util-linux). Ubuntu / Debian ship
+it in `util-linux`; macOS via `brew install flock` (Linuxbrew
+formula). Add to host-deps documentation on the next README
+sweep.
+
 ## 2.5.44 "AQ_CPU override for cross-host-family migration (R24 root cause)" 2026-05-28
 
 R24 internal-error post-incoming-migration is root-caused: GH
