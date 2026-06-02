@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.5.49 "ensure_base_image: gracefully skip flock on macOS" 2026-06-02
+
+Regression from v2.5.45's flock fix: `flock(1)` isn't part of
+macOS by default (util-linux only — brew install required), so
+v2.5.45–48 broke `aq new` on every macOS host with `flock:
+command not found`. The smoke test `tests/guest-cleanup.sh`
+surfaced this on host as soon as a fresh base bootstrap was
+attempted.
+
+`ensure_base_image` now `command -v flock`-gates the lock
+acquisition. macOS hosts proceed without the lock — single-VM
+provisioning has no race there, and macOS isn't a CI parallel-
+multi-VM target today. Linux runners (the only context where
+par-cold matters) always have flock via util-linux, so they
+keep the lock semantics.
+
 ## 2.5.48 "qmp_wait_migrate_incoming budget — bigger baseline + per-GiB" 2026-06-02
 
 Follow-up to v2.5.46's size-scaled migrate-incoming budget. That

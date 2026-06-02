@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.48
+VERSION=2.5.49
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -568,25 +568,37 @@ ensure_base_image() {
   if [ -f "$BASE_DIR/$ARCH/$fname" ]; then
     return 0
   fi
+  mkdir -p "$BASE_DIR/$ARCH"
   # Concurrent `aq new` callers on a fresh cache must not race the
   # bootstrap. Wrap the bootstrap step in a flock on
   # `<base-dir>/<arch>/.bootstrap.lock`. Second arrival blocks here,
   # then re-checks after acquiring the lock — if the first arrival
   # produced the base, skip our own bootstrap.
-  mkdir -p "$BASE_DIR/$ARCH"
-  # Open the lockfile via `9>>` (append) rather than `9>` (truncate):
+  #
+  # macOS doesn't ship flock(1) (util-linux only — install via
+  # `brew install flock` if you need it). On hosts without it we
+  # skip the lock acquisition — single-VM provisioning has no race
+  # there, and macOS isn't a CI parallel-multi-VM target today.
+  # Linux runners (the only context where par-cold matters) always
+  # have flock via util-linux.
+  #
+  # Lockfile is opened via `9>>` (append) rather than `9>` (truncate):
   # `set -fC` (noclobber) at the top of this script makes `9>` refuse
   # to overwrite an existing file, so the SECOND arriving process —
   # the very case this lock exists to coordinate — would fail with
-  # "cannot overwrite existing file" before reaching `flock`.
-  # `>>` is allowed under noclobber, creates if missing, and flock
-  # operates on the descriptor's underlying inode regardless of mode.
-  (
-    flock 9
-    if [ ! -f "$BASE_DIR/$ARCH/$fname" ]; then
-      bootstrap_base_image "$size"
-    fi
-  ) 9>>"$BASE_DIR/$ARCH/.bootstrap.lock"
+  # "cannot overwrite existing file" before reaching `flock`. `>>`
+  # is allowed under noclobber, creates if missing, and flock operates
+  # on the descriptor's underlying inode regardless of mode.
+  if command -v flock >/dev/null 2>&1; then
+    (
+      flock 9
+      if [ ! -f "$BASE_DIR/$ARCH/$fname" ]; then
+        bootstrap_base_image "$size"
+      fi
+    ) 9>>"$BASE_DIR/$ARCH/.bootstrap.lock"
+  else
+    bootstrap_base_image "$size"
+  fi
 }
 
 bootstrap_base_image() {
