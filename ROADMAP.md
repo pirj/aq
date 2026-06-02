@@ -64,6 +64,34 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 
 ### Concurrency
 
+- [ ] **Multi-VM chain-walk incoming-migration timeout (seq-cold,
+  second VM).** Found by snapcompose-benchmark Phase 3 walking-
+  skeleton on 2026-06-02, run 26804727138, job 79019327924
+  (`plus1 / cold / seq`). After the first VM (`main`) successfully
+  walks its full chain (docker-engine → docker-compose →
+  mise-base → ruby-runtime → ruby-bundler), the second VM (`node`)
+  begins its own chain walk. At the docker-compose layer, after
+  creating its own `cf1cfb...` snapshot, aq stages the
+  concatenated memory.bin.zst of the live layers (here:
+  docker-compose @ 267 MB + mise-base @ 371 MB = 1.25 GiB
+  combined) and feeds it to QEMU via `-incoming exec:zstd -dc`.
+  The migration completion poll then times out after 300×200 ms
+  = 60 s with "Incoming migration did not apply".
+  - The 60 s ceiling is hit BEFORE the migration completes —
+    consumer is processing the stream, the timer is too tight
+    for this payload size on ubuntu-latest. Either a) raise the
+    poll budget proportional to the staged memory size, or
+    b) replace polling with a QMP event-driven wait
+    (`MIGRATION` event with `status: completed`).
+  - Sanity check: monolith/cold (one VM, same chain) completes
+    successfully on the same runner. The trip is specific to the
+    multi-VM "second VM walks its OWN chain after the first VM
+    finished" pattern.
+  - Until fixed, `+1 seq cold` in snapcompose-benchmark is
+    reported as `✗ aq-incoming-timeout` per the methodology's
+    cap-trip convention. seq/warm and par/warm are unaffected
+    (cache hits don't replay the full chain build).
+
 - [ ] **Concurrent base-image bootstrap race (par-cold from
   multiple `aq new` invocations).** Found by snapcompose-benchmark
   Phase 3 walking-skeleton on 2026-06-02. Symptom: when two `snapc
