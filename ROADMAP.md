@@ -62,33 +62,6 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 - [ ] `.config/aq.toml` for configuring the SSH key?
 - [ ] fwd options: tcp/udp, hostaddr, guestaddr
 
-### Guest cleanup regression
-
-- [ ] **`/etc/motd` cleanup not applied during fresh base bootstrap.**
-  Surfaced by `tests/guest-cleanup.sh` on 2026-06-02 against a
-  newly-rebuilt v2.5.49 base (aarch64): the guest's `/etc/motd`
-  has the Alpine stock content (`Welcome to Alpine! …`) with
-  Modify timestamp `2025-03-25 13:16:43` (the apk package's
-  installed mtime), proving the bootstrap's `$cleanup` string
-  never overwrote it. The kernel + initramfs extraction
-  (`need_extract=1` path with `wait_for AQ_EXTRACT_READY`)
-  succeeds, so the guest_extract script DID reach the guest —
-  but somewhere between line `$cleanup` and the file write
-  to `/target/etc/motd`, the write didn't land. Hypotheses:
-  the loop mounts a partition where `/etc/` isn't writable
-  (e.g. boot partition); double-quote interactions in the
-  cleanup string mangled the printf argument under serial
-  transmission; the printf to `/target/etc/motd` lands on the
-  RAM tmpfs of the live ISO rather than the installed root.
-  Repro: `rm -v ~/.local/share/aq/*/alpine-base-*.raw` +
-  `rm -v ~/.local/share/aq/*/{vmlinuz-virt,initramfs-virt}` +
-  `AQ=./aq tests/guest-cleanup.sh`. Cleanup that DOES survive
-  (`rm /root/setup.conf`, `rm /root/.ash_history`) suggests
-  the script is running but the printf-redirect isn't hitting
-  the right path. Verify by adding a sentinel `echo IN_CLEANUP
-  > /target/cleanup-ran` before/after the printf and checking
-  whether either landed in the installed system.
-
 ### Concurrency
 
 - [ ] **Multi-VM chain-walk incoming-migration timeout (seq-cold,
