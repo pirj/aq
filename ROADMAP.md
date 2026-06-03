@@ -62,6 +62,38 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 - [ ] `.config/aq.toml` for configuring the SSH key?
 - [ ] fwd options: tcp/udp, hostaddr, guestaddr
 
+### QEMU-native multifd zstd compression (replace separate zstd step)
+
+- [ ] **Switch live-snapshot save from `migrate file:` + separate
+  `zstd --rm` step to QEMU's native multifd zstd.** QEMU 10.0+
+  (confirmed on our 10.0.3 pin) supports `multifd-compression=zstd`
+  for `migrate file:<path>` via:
+  ```
+  migrate-set-parameter multifd-channels N
+  migrate-set-parameter multifd-compression zstd
+  migrate -d file:./memory.bin.zst
+  ```
+  Restore side: `-incoming defer` + `migrate-incoming defer` +
+  multifd params + `migrate-incoming file:./memory.bin.zst` (or
+  modern URI form). This removes:
+  1. The separate `pzstd / zstd --rm` post-processing step (~2-5 s).
+  2. The zstd CLI's 2 GiB single-shot ceiling that `v2.5.51`
+     papers over with a plain-zstd fallback.
+  3. The pzstd-vs-zstd checksum quirk noted at `aq:2146-2154`
+     (single-thread zstd-dc on patch reconstruction).
+  Open questions before implementation:
+  * Does multifd file: target work with HVF on macOS aarch64?
+    (KVM on Linux x86_64 is well-tested upstream; HVF parity
+    needs a small probe).
+  * Can we still `--patch-from` against a multifd-compressed
+    .zst reference, or does that require decompressing first?
+    The patch path would then become "decompress multifd parent
+    → patch-from on raw → recompress multifd" — net wins less
+    clear; might be cheaper to lose patch-storage and store full
+    snapshots when chains are shallow.
+  * Cache-payload size delta vs current `zstd` mode — measure
+    on rails-pg-sample before committing.
+
 ### Concurrency
 
 - [ ] **Multi-VM chain-walk incoming-migration timeout (seq-cold,

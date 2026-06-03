@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.5.51 "zstd-patch save: fall back to plain zstd on >2 GiB memory.bin" 2026-06-03
+
+Surfaced by snapcompose-benchmark in CI runs 2026-06-02:
+`zstd: error 42 : Can't handle files larger than 2 GB`. The
+`--patch-from` CLI path reads both reference and input fully
+into memory (single-shot mode) and bails past INT32_MAX bytes
+= 2 GiB. 4 GiB-RAM guests with live docker-compose stacks
+routinely produce memory.bin in the 2–3 GiB range, so this
+isn't a corner case — it's the Phase 2+ benchmark fixture's
+default state. Result: the warm-from-patch column couldn't
+populate because zstd failed mid-save.
+
+`AQ_MEMORY_SNAPSHOT=zstd-patch` now `stat`s both the input
+memory.bin and the decompressed parent reference. When either
+exceeds 2 GiB, the save transparently falls back to plain
+pzstd / zstd of memory.bin (no `--patch-from`) and skips
+emitting the `memory.format` patch marker. The chain still
+builds; the layer just loses the patch-storage win on this
+hop. Subsequent layers can resume patching against a smaller
+ancestor.
+
+Streaming via stdin would bypass the limit for the input
+file but `--patch-from`'s reference is `stat`-checked
+regardless, so streaming-only doesn't help. The architectural
+fix — switching the save path to QEMU's native multifd zstd
+compression (`multifd-compression=zstd` + `migrate file:`) —
+would remove the limit, the separate compress step, AND the
+pzstd-vs-zstd checksum quirk in one go. Filed separately.
+
 ## 2.5.50 "bootstrap cleanup: trial-mount /dev/vda* (aarch64 fix)" 2026-06-02
 
 Surfaced by `tests/guest-cleanup.sh` on aarch64 macOS host

@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.50
+VERSION=2.5.51
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -2156,17 +2156,48 @@ aq_snapshot_create() {
         # the save side of AQ_MEMORY_SNAPSHOT=zstd-patch (opt-in) and is
         # buried in cold-build wall-clock.
         zstd -dc "$AQ_PARENT_MEMORY_ZST" >| "$_parent_raw"
-        stderr "Live snapshot: computing memory delta (zstd --patch-from)..."
-        # --long=31 sets the long-range window to 2 GiB, big enough to
-        # cover our typical 1.6 GiB memory.bin reference. Default
-        # window is 128 MiB which would error at compress time on any
-        # reference larger than that. Restore side needs the matching
-        # --long=31 flag (set in rlock's chain reconstruction).
-        zstd -q --rm --long=31 --patch-from="$_parent_raw" "$snap_dir/memory.bin" \
-          -o "$snap_dir/memory.bin.zstpatch"
-        rm -f "$_parent_raw"
-        # Tag the artifact format so rlock knows to chain-reconstruct.
-        echo "patch" > "$snap_dir/memory.format"
+        # zstd CLI's `--patch-from` reads the entire reference + input
+        # into memory at compress time (single-shot mode); past 2 GiB
+        # (INT32_MAX bytes) it bails with "error 42 : Can't handle
+        # files larger than 2 GB". 4 GiB-RAM guests with live
+        # docker-compose stacks routinely produce memory.bin in the
+        # 2-3 GiB range, so this isn't a corner case — it's the
+        # default Phase 2+ benchmark fixture state. When either the
+        # parent reference or the input exceeds the limit, fall back
+        # transparently to plain `zstd` compression for this layer —
+        # we lose the patch-storage win but the chain still builds.
+        local _patch_limit=2147483647   # INT32_MAX bytes = 2 GiB
+        local _input_size _parent_size
+        _input_size=$(stat -c%s "$snap_dir/memory.bin" 2>/dev/null \
+                      || stat -f%z "$snap_dir/memory.bin" 2>/dev/null \
+                      || echo 0)
+        _parent_size=$(stat -c%s "$_parent_raw" 2>/dev/null \
+                       || stat -f%z "$_parent_raw" 2>/dev/null \
+                       || echo 0)
+        if [ "$_input_size" -gt "$_patch_limit" ] || \
+           [ "$_parent_size" -gt "$_patch_limit" ]; then
+          stderr "Live snapshot: memory.bin (${_input_size}B) or parent (${_parent_size}B) exceeds zstd's 2 GiB --patch-from single-shot limit — falling back to plain zstd compression for this layer."
+          rm -f "$_parent_raw"
+          if command -v pzstd >/dev/null 2>&1; then
+            pzstd -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
+          else
+            zstd -T0 -q --rm "$snap_dir/memory.bin" -o "$snap_dir/memory.bin.zst"
+          fi
+          # No memory.format file — rlock's reconstruction reads the
+          # .zst directly without a patch-apply chain.
+        else
+          stderr "Live snapshot: computing memory delta (zstd --patch-from)..."
+          # --long=31 sets the long-range window to 2 GiB, big enough to
+          # cover our typical 1.6 GiB memory.bin reference. Default
+          # window is 128 MiB which would error at compress time on any
+          # reference larger than that. Restore side needs the matching
+          # --long=31 flag (set in rlock's chain reconstruction).
+          zstd -q --rm --long=31 --patch-from="$_parent_raw" "$snap_dir/memory.bin" \
+            -o "$snap_dir/memory.bin.zstpatch"
+          rm -f "$_parent_raw"
+          # Tag the artifact format so rlock knows to chain-reconstruct.
+          echo "patch" > "$snap_dir/memory.format"
+        fi
         ;;
       zstd)
         if command -v pzstd >/dev/null 2>&1; then
