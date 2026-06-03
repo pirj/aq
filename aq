@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.51
+VERSION=2.5.52
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -1329,7 +1329,19 @@ qmp_wait_migrate_incoming() {
       stderr "  AQ_TIMING: qmp_wait_migrate_incoming budget=${max_attempts} polls ($((max_attempts / 5))s) for ~$((incoming_bytes / 1048576)) MiB incoming"
     fi
   fi
-  local attempt=0
+  # Two failure modes the loop must distinguish:
+  #   * Genuine stall (qemu/migration deadlock, broken stream) — bail fast.
+  #   * Slow apply (hot dockerd contention, big incoming) — wait long.
+  # A pure fixed budget conflates them. Instead, every poll fetches
+  # query-migrate's `transferred` byte counter alongside the status:
+  # while bytes keep climbing, the migration IS making progress and we
+  # extend the budget. Only when bytes plateau (no climb for ~30 s)
+  # do we declare stuck.
+  #
+  # The budget computed above is the WALL-CLOCK MAX (safety net for
+  # the truly-stuck case); the progress check is the inner heuristic.
+  local attempt=0 last_bytes=0 stuck_polls=0
+  local stuck_threshold=150   # 150 polls × 0.2 s = 30 s of no progress = stuck
   while [ $attempt -lt $max_attempts ]; do
     local resp
     resp=$(qmp_hmp "$sock" 'info status' 2>/dev/null)
@@ -1338,10 +1350,33 @@ qmp_wait_migrate_incoming() {
       *'VM status: paused'*)             return 0 ;; # migration done, ready for cont
       *'VM status: running'*)            return 0 ;; # cont already happened (autocont)
     esac
+
+    # Progress check: only on every 10th poll (2 s cadence) to keep
+    # QMP overhead down. Stuck-detection still fires at ~30 s resolution.
+    if [ $((attempt % 10)) -eq 0 ]; then
+      local mig_resp cur_bytes
+      mig_resp=$(qmp_send "$sock" '{"execute":"query-migrate"}' 2>/dev/null)
+      # Pull `transferred` from query-migrate's nested ram.transferred.
+      # awk -F over the flat JSON is enough — no jq dependency.
+      cur_bytes=$(printf '%s' "$mig_resp" \
+        | awk -F'"transferred":' 'NF>1 { sub(/^[^0-9]*/, "", $2); sub(/[^0-9].*/, "", $2); print $2; exit }')
+      cur_bytes=${cur_bytes:-0}
+      if [ "$cur_bytes" -gt "$last_bytes" ]; then
+        last_bytes=$cur_bytes
+        stuck_polls=0
+      else
+        stuck_polls=$((stuck_polls + 10))   # +10 because we only check every 10 polls
+        if [ "$stuck_polls" -ge "$stuck_threshold" ]; then
+          stderr "Incoming migration appears stuck — no progress for ~$((stuck_polls / 5)) s (last transferred=${last_bytes} bytes)."
+          return 1
+        fi
+      fi
+    fi
+
     attempt=$((attempt + 1))
     sleep 0.2
   done
-  stderr "Incoming migration did not apply after ${max_attempts} polls."
+  stderr "Incoming migration did not apply after ${max_attempts} polls (wall-clock max). Last transferred=${last_bytes} bytes."
   return 1
 }
 

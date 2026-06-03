@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.5.52 "qmp_wait_migrate_incoming: progress-based stall detection" 2026-06-03
+
+Pure fixed-budget polling conflated two failure modes: real
+deadlocks (bail fast) vs slow apply under runner contention
+(wait long). snapcompose-benchmark `+1 seq cold` kept hitting
+the v2.5.48 budget ceiling (2100 polls / 7 min for 2 GiB
+estimated raw) even though we couldn't tell whether the
+migration was genuinely stuck or just crawling.
+
+Inner heuristic: every 10th poll (2 s cadence) reads
+`query-migrate`'s `ram.transferred` byte counter. As long as
+the byte count is climbing, we keep waiting — that's real
+progress. Only when no climb has been observed for ~30 s do
+we declare the migration stuck and return 1 with diagnostic.
+The pre-existing size-scaled wall-clock max stays as a safety
+net for the (unlikely) case of "real, sustained, very slow"
+that should still bail.
+
+Trades the brittle 2-min/GiB heuristic for a real-progress
+signal. Wall-clock failure messages now include the last
+`transferred` byte value so post-mortems are actionable.
+
 ## 2.5.51 "zstd-patch save: fall back to plain zstd on >2 GiB memory.bin" 2026-06-03
 
 Surfaced by snapcompose-benchmark in CI runs 2026-06-02:
