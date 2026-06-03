@@ -7,6 +7,7 @@ AQ_PATH="${AQ:-./aq}"
 
 # Source the aq script but skip its main dispatch by setting the guard.
 # DEBUG must be defined because aq does `[ -z "$DEBUG" ]` under `set -u`.
+# shellcheck source=../aq
 __AQ_SOURCED_ONLY=1 DEBUG="" source "$AQ_PATH"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }

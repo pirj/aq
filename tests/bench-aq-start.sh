@@ -34,6 +34,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# shellcheck disable=SC2154  # stat is assigned inside the trap body before use
 trap 'stat=$?; cleanup; exit $stat' EXIT
 
 VMS=()

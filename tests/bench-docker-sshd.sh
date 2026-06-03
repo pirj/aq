@@ -43,6 +43,7 @@ cleanup() {
     docker rm -f "$cid" >/dev/null 2>&1
   done
 }
+# shellcheck disable=SC2154  # stat is assigned inside the trap body before use
 trap 'stat=$?; cleanup; exit $stat' EXIT
 
 # Pick a free high port for each run. We don't reuse the port across

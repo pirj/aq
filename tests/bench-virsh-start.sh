@@ -50,6 +50,7 @@ cleanup() {
   sudo virsh undefine --remove-all-storage "$VM_NAME" >/dev/null 2>&1
   rm -rf "$WORKDIR"
 }
+# shellcheck disable=SC2154  # stat is assigned inside the trap body before use
 trap 'stat=$?; cleanup; exit $stat' EXIT
 
 echo "# label=$LABEL runs=$RUNS image=$ALPINE_IMG_URL probe=${PROBE_INTERVAL}s virsh=$(virsh --version 2>&1 | head -1)"

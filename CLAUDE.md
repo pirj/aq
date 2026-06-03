@@ -110,6 +110,13 @@ the CLI is meant for both humans and scripts.
   and a benchmark run — `rlock` and `snapcompose` depend on the
   on-disk layout for cross-machine cache (planned via OCI).
 
+
+## Linting (shellcheck)
+
+All shell scripts must pass `shellcheck --severity=warning --external-sources`. CI enforces this on every push and PR via `.github/workflows/shellcheck.yml`; run the same check locally before committing shell changes.
+
+Disable findings only with inline `# shellcheck disable=SCxxxx  # reason` directives. Do not disable warnings repo-wide. The repo-level `.shellcheckrc` only sets `external-sources=true` and `source-path=SCRIPTDIR` so sourced libs resolve correctly.
+
 ## Sibling repos
 
 - [`rlock`](https://github.com/pirj/rlock) — consumes `aq`'s

@@ -209,7 +209,8 @@ migrate_base_dir_to_arch() {
            "$BASE_DIR"/uefi-vars.json; do
     [ -e "$f" ] || continue
     [ -d "$f" ] && continue
-    local basename=$(basename "$f")
+    local basename
+    basename=$(basename "$f")
     if [ -e "$arch_dir/$basename" ]; then
       # Newer per-arch copy already exists; the old top-level file is an orphan.
       rm -f "$f"
@@ -634,6 +635,7 @@ bootstrap_base_image() {
     local nic_args="user,model=virtio-net-pci"
     [ "$need_extract" = "1" ] && nic_args="$nic_args,hostfwd=tcp::$extract_port-:8080"
 
+    # shellcheck disable=SC2046  # uefi_vars_args emits multiple QEMU flags; word split is intentional
     $QEMU_BIN \
       -machine $MACHINE_OPTS -accel $ACCEL -cpu ${AQ_CPU:-host} -m 1G \
       -drive file=$UEFI_CODE,format=raw,if=pflash,readonly=on,unit=0 \
@@ -1202,8 +1204,9 @@ _aq_new_one() {
       # Prefer the zstd-compressed memory dump when present (saved by a
       # zstd-enabled snapshot create); aq_start detects the .zst suffix
       # and feeds QEMU via `-incoming exec:zstd -dc`.
-      local src_zst="$(snapshot_path "$resolved")/memory.bin.zst"
-      local src_plain="$(snapshot_path "$resolved")/memory.bin"
+      local src_zst src_plain
+      src_zst="$(snapshot_path "$resolved")/memory.bin.zst"
+      src_plain="$(snapshot_path "$resolved")/memory.bin"
       if [ -f "$src_zst" ]; then
         local dst="$BASE_DIR/$vm_name/incoming-memory.bin.zst"
         ln "$src_zst" "$dst" 2>/dev/null || cp "$src_zst" "$dst"
@@ -1442,6 +1445,7 @@ vm_ssh() {
   VM_NAME=$1
   shift
   SSH_PORT=$(get_vm_ssh_details "$VM_NAME")
+  # shellcheck disable=SC2046  # aq_ssh_id_args emits multi-token ssh flags; word split is intentional
   ssh $(aq_ssh_id_args) -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p "$SSH_PORT" root@localhost "$@"
 }
 
@@ -1449,7 +1453,8 @@ vm_ssh() {
 vm_scp() {
   local vm_name="$1"
   shift
-  local ssh_port=$(get_vm_ssh_details "$vm_name")
+  local ssh_port
+  ssh_port=$(get_vm_ssh_details "$vm_name")
   scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "$ssh_port" "$@"
 }
 
@@ -1459,7 +1464,7 @@ hostfwd() {
     cd $BASE_DIR/$VM_NAME
     directives=()
     for forward in $(cat hostfwd.conf); do
-      directives+=($(hostfwd_directive $forward))
+      directives+=("$(hostfwd_directive "$forward")")
     done
     IFS=,
     if [ ${#directives[@]} -gt 0 ]; then
@@ -1521,6 +1526,7 @@ wait_for_ssh() {
   local ssh_port
   ssh_port=$(get_vm_ssh_details "$vm_name")
   while [ $attempt -lt $max_attempts ]; do
+    # shellcheck disable=SC2046  # aq_ssh_id_args emits multi-token ssh flags; word split is intentional
     if ssh $(aq_ssh_id_args) -o StrictHostKeyChecking=no \
            -o UserKnownHostsFile=/dev/null \
            -o ConnectTimeout=1 \
@@ -1547,6 +1553,7 @@ wait_for_ssh() {
   stderr "  netstat (host listening on $ssh_port):"
   netstat -an 2>&1 | grep ":$ssh_port " | head -3 >&2 || true
   stderr "  ssh -v output:"
+  # shellcheck disable=SC2046  # aq_ssh_id_args emits multi-token ssh flags; word split is intentional
   ssh $(aq_ssh_id_args) -vv -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
       -o ConnectTimeout=5 -p "$ssh_port" root@localhost true 2>&1 | head -30 >&2 || true
   return 1
@@ -1976,7 +1983,7 @@ aq_scp() {
   [ $# -lt 2 ] && stderr 'Error: At least source and destination required after options.' && exit 1
 
   # Last argument is destination
-  destination="${@: -1}"
+  destination="${*: -1}"
   # All but last are sources
   sources=("${@:1:$(($#-1))}")
 
@@ -2065,7 +2072,7 @@ aq_rm() {
   ! vm_exists "$VM_NAME" && stderr "Error: VM '$VM_NAME' does not exist." && exit 1
 
   aq_stop $VM_NAME
-  rm -rf $BASE_DIR/$VM_NAME
+  rm -rf "${BASE_DIR:?}/${VM_NAME:?}"
   stderr "Removed" $VM_NAME
 }
 
@@ -2482,6 +2489,7 @@ aq_fanout() {
   aq_new --from-snapshot="$tag" --count="$n" "$prefix" >/dev/null
 
   if [ "$keep" -eq 0 ]; then
+    # shellcheck disable=SC2064  # $prefix and $n are function-local; expand at trap-set time intentionally
     trap "_aq_fanout_cleanup '$prefix' '$n'" EXIT
   fi
 
@@ -2566,7 +2574,8 @@ aq_ls() {
 
   (
     cd "$BASE_DIR"
-    for vm_dir in $(ls); do
+    shopt -s nullglob
+    for vm_dir in *; do
       [ ! -d "$vm_dir" ] && continue
       # Skip per-arch metadata directories and snapshot infrastructure
       case "$vm_dir" in
