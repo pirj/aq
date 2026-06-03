@@ -62,7 +62,33 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 - [ ] `.config/aq.toml` for configuring the SSH key?
 - [ ] fwd options: tcp/udp, hostaddr, guestaddr
 
-### QEMU-native zstd for live-snapshot save (probe 2026-06-03: NOT viable on QEMU 10.0.3)
+### QEMU-native zstd for live-snapshot save — IN WAITING (upstream)
+
+Upstream status, last checked 2026-06-03:
+* QEMU 10.0.3 (our pin) — `file:` + `multifd` + zstd hard-rejected
+  by both `file:` URI ("requires multi-channel URIs") and the
+  `mapped-ram` companion ("Cannot use compression with mapped-ram").
+* QEMU 11.0 (released 2026-04-22) — incompatibility still documented
+  as an architectural limitation, not a bug. Root cause: `mapped-ram`
+  needs a **seekable** fd; the current multifd-zstd path writes via
+  a non-seekable pipe to the compressor. No fix in 11.0 release notes.
+* QEMU 11.1 — not yet released (QEMU cadence is ~6 months per major;
+  11.1 expected Oct-Nov 2026). No mapped-ram-compression work named
+  in planning.
+
+**Ticket assessment**: not worth filing upstream as a bug — it's a
+documented architectural limitation under active discussion in
+qemu-devel without a settled design. Filing would add noise. A
+feature-request with a *clean proposed format* (random-access
+compressed chunks aligned to mapped-ram's seekable layout) would be
+welcome but is itself a multi-month upstream design problem
+(~1–3 months of qemu-devel review cycles even after a working
+prototype lands). Out of scope for now.
+
+**Re-poll trigger**: QEMU 11.1 release announcement, OR a positive
+mention in the QEMU monthly migration sub-maintainer's summary.
+
+
 
 - [ ] **Switch from `migrate file:` + separate `zstd --rm` to native
   QEMU compression once QEMU allows it on `file:` URIs.** Probed
