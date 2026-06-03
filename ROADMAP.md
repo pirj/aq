@@ -62,37 +62,41 @@ These all apply to the bootstrapped per-size base image. They are cosmetic; exis
 - [ ] `.config/aq.toml` for configuring the SSH key?
 - [ ] fwd options: tcp/udp, hostaddr, guestaddr
 
-### QEMU-native multifd zstd compression (replace separate zstd step)
+### QEMU-native zstd for live-snapshot save (probe 2026-06-03: NOT viable on QEMU 10.0.3)
 
-- [ ] **Switch live-snapshot save from `migrate file:` + separate
-  `zstd --rm` step to QEMU's native multifd zstd.** QEMU 10.0+
-  (confirmed on our 10.0.3 pin) supports `multifd-compression=zstd`
-  for `migrate file:<path>` via:
-  ```
-  migrate-set-parameter multifd-channels N
-  migrate-set-parameter multifd-compression zstd
-  migrate -d file:./memory.bin.zst
-  ```
-  Restore side: `-incoming defer` + `migrate-incoming defer` +
-  multifd params + `migrate-incoming file:./memory.bin.zst` (or
-  modern URI form). This removes:
-  1. The separate `pzstd / zstd --rm` post-processing step (~2-5 s).
-  2. The zstd CLI's 2 GiB single-shot ceiling that `v2.5.51`
-     papers over with a plain-zstd fallback.
-  3. The pzstd-vs-zstd checksum quirk noted at `aq:2146-2154`
-     (single-thread zstd-dc on patch reconstruction).
-  Open questions before implementation:
-  * Does multifd file: target work with HVF on macOS aarch64?
-    (KVM on Linux x86_64 is well-tested upstream; HVF parity
-    needs a small probe).
-  * Can we still `--patch-from` against a multifd-compressed
-    .zst reference, or does that require decompressing first?
-    The patch path would then become "decompress multifd parent
-    → patch-from on raw → recompress multifd" — net wins less
-    clear; might be cheaper to lose patch-storage and store full
-    snapshots when chains are shallow.
-  * Cache-payload size delta vs current `zstd` mode — measure
-    on rails-pg-sample before committing.
+- [ ] **Switch from `migrate file:` + separate `zstd --rm` to native
+  QEMU compression once QEMU allows it on `file:` URIs.** Probed
+  2026-06-03 against our 10.0.3 pin with the following matrix:
+
+  | capability combo | result |
+  |---|---|
+  | `file:` plain | works, no compression (current path) |
+  | `file:` + `mapped-ram` | works, sparse parallel I/O, NO compression |
+  | `file:` + `multifd` + `multifd-compression=zstd` | **rejected**: `"Migration requires multi-channel URIs (e.g. tcp)"` |
+  | `file:` + `mapped-ram` + `multifd-compression=zstd` | **rejected**: `"Cannot use compression with mapped-ram"` |
+  | socket + `multifd` + `multifd-compression=zstd` | works (network target only) |
+
+  Upstream-fixed by QEMU >= 11.x (need to verify against release
+  notes when 11.0 ships). Until then, three alternative paths
+  remain, in order of complexity:
+
+  1. **`fd:` migration + piped pzstd** — pass a pipe write-fd to
+     QEMU via QMP `getfd`, have `pzstd > out.zst` read the pipe.
+     Streams correctly (no 2 GiB CLI limit because the input is
+     stdin, not a `stat`-checked path) and uses standard zstd
+     format. Cost: QMP fd-passing plumbing, parallel process
+     coordination.
+  2. **Socket → file consumer** — `migrate unix:./sock`, `nc -U
+     sock > out` collects, post-process. Loses file: simplicity,
+     gains multifd-zstd. Cost: socket lifecycle management.
+  3. **Stay with current path** + the v2.5.51 fallback. Accepts
+     the patch-storage loss on >2 GiB layers; keeps the
+     pzstd-vs-zstd checksum quirk in v2.5.27's TODO.
+
+  Recommended next step when this is taken up: pursue option (1)
+  — it removes the 2 GiB limit AND keeps the standard zstd
+  on-disk format AND drops the post-process step. Implementation
+  spike: ~half-day.
 
 ### Concurrency
 
