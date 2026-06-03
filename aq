@@ -229,7 +229,7 @@ migrate_base_dir_to_arch() {
 
 detect_host
 
-VERSION=2.5.52
+VERSION=2.5.53
 
 BASE_DIR=~/.local/share/aq
 LATEST_ALPINE_VERSION=3.22.2
@@ -371,8 +371,12 @@ download_alpine_iso() {
   (
     cd $BASE_DIR/$ARCH
     if [ ! -f $LATEST_ALPINE_ISO ]; then
-      wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/$ARCH/$LATEST_ALPINE_ISO
-      wget https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/$ARCH/$LATEST_ALPINE_ISO.asc
+      # --no-verbose: drop the per-50 KiB "0K .......... .." progress
+      # dots that flood CI logs (~1400 lines per 65 MiB ISO). Final
+      # status line is still printed (one line per file). Errors still
+      # go to stderr.
+      wget --no-verbose https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/$ARCH/$LATEST_ALPINE_ISO
+      wget --no-verbose https://dl-cdn.alpinelinux.org/alpine/v$LATEST_ALPINE_MAJOR_MINOR/releases/$ARCH/$LATEST_ALPINE_ISO.asc
       wget -qO- https://alpinelinux.org/keys/ncopa.asc | gpg --import
       if ! gpg --verify $LATEST_ALPINE_ISO.asc $LATEST_ALPINE_ISO; then
         echo "ERROR: Downloaded Apline ISO GPG signature verification failed!"

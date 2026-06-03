@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.53 "wget --no-verbose: silence ISO-download progress dots" 2026-06-03
+
+`download_alpine_iso` invoked `wget` without `--no-verbose`,
+so every cold base-bootstrap added ~1400 lines of
+`0K .......... .......... ..` dot-progress to the CI log per
+65 MiB ISO download. With `--no-verbose`, wget emits one
+summary line per file. Errors still go to stderr unchanged.
+
 ## 2.5.52 "qmp_wait_migrate_incoming: progress-based stall detection" 2026-06-03
 
 Pure fixed-budget polling conflated two failure modes: real
